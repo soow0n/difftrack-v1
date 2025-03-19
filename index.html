@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="description"
+        content="Visual Persona: Foundation Model for Full-Body Human Customization">
+  <meta name="keywords" content="Diffusion, Matching">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Visual Persona: Foundation Model for Full-Body Human Customization</title>
+  <link href="https://fonts.googleapis.com/css?family=Google+Sans|Noto+Sans|Castoro"
+        rel="stylesheet">
+
+  <link rel="stylesheet" href="./static/css/bulma.min.css">
+  <link rel="stylesheet" href="./static/css/bulma-carousel.min.css">
+  <link rel="stylesheet" href="./static/css/bulma-slider.min.css">
+  <link rel="stylesheet" href="./static/css/fontawesome.all.min.css">
+  <link rel="stylesheet"
+        href="https://cdn.jsdelivr.net/gh/jpswalsh/academicons@1/css/academicons.min.css">
+  <link rel="stylesheet" href="./static/css/slider.css">
+  <link rel="stylesheet" href="./static/css/app.css">
+  <link rel="stylesheet" href="./static/css/index.css">
+  <link rel="stylesheet" href="./static/css/bootstrap.min.css">
+  <link rel="stylesheet" href="./static/css/twentytwenty.css">
+  <link rel="icon" href="./static/images/favicon.svg">
+
+  <!-- <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script> -->
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <script defer src="./static/js/fontawesome.all.min.js"></script>
+  <script src="./static/js/bulma-carousel.min.js"></script>
+  <script src="./static/js/bulma-slider.min.js"></script>
+  <script src="./static/js/jquery.event.move.js"></script>
+  <script src="./static/js/jquery.twentytwenty.js"></script>
+  <script src="./static/js/slider.js"></script>
+  <script> 
+    $(function(){
+      $("#includeContent").load("teaser.html"); 
+    });
+  </script>
+</head>
+<body>
+
+<!-- <section class="hero"> -->
+  <div class="hero-body">
+    <div class="container is-max-desktop">
+      <div class="columns is-centered">
+        <div class="column has-text-centered">
+          <h1 class="title publication-title">Visual Persona: Foundation Model for Full-Body Human Customization</h1>
+          <div class="publication-authors">
+            <span class="author-block">
+              <a href="https://scholar.google.com/citations?hl=zh-CN&user=xakYe8MAAAAJ">Jisu Nam<sup>1</sup></a>,
+            </span>
+            <span class="author-block">
+              <a href="https://scholar.google.com/citations?user=Eo87mRsAAAAJ&hl=ko&oi=ao">Soowon Son<sup>1</sup></a>,
+            </span>
+            <span class="author-block">
+              <a href="https://scholar.google.com/citations?user=pF2vMhgAAAAJ&hl=zh-CN">Zhan Xu<sup>2</sup></a>,
+            </span>
+            <span class="author-block">
+              <a href="https://scholar.google.com/citations?hl=zh-CN&user=GPDTa9sAAAAJ">Jing Shi<sup>2</sup></a>,
+            </span>
+            <span class="author-block">
+              <a href="https://scholar.google.com/citations?hl=zh-CN&user=FHtM5MUAAAAJ">Difan Liu<sup>2</sup></a>,
+            </span>
+            <span class="author-block">
+              <a href="https://scholar.google.com/citations?hl=zh-CN&user=uiqXutMAAAAJ">Feng Liu<sup>2</sup></a>,
+            </span>
+            <span class="author-block">
+              <a href="https://scholar.google.com/citations?hl=zh-CN&user=WEVBTxsAAAAJ">Aashish Misraa<sup>3</sup></a>,
+            </span>
+            <span class="author-block">
+              <a href="https://scholar.google.com/citations?hl=zh-CN&user=cIK1hS8AAAAJ">Seungryong Kim<sup>&dagger;1</sup></a>,
+            </span>
+            <span class="author-block">
+              <a href="">Yang Zhou<sup>&dagger;2</sup></a>
+            </span> 
+          </div>
+          <div class="is-size-5 publication-authors">
+            <span class="author-block"><sup>1</sup>KAIST AI, <sup>2</sup>Adobe Research, <sup>3</sup>Adobe
+          </div>
+
+          <div class="is-size-5 publication-authors">
+            <span class="author-block"><sup>&dagger;</sup>Co-corresponding author
+          </div>
+          
+          <h1 class="publication-awards">CVPR 2025</h1>
+
+          <div class="column has-text-centered">
+            <div class="publication-links">
+              <span class="link-block">
+                <a href=""
+                   class="external-link button is-normal is-rounded is-dark"
+                   style="font-size: 16px;">
+                  <span class="icon">
+                      <i class="ai ai-arxiv"></i>
+                  </span>
+                  <span>arXiv</span>
+                </a>
+              </span>
+            
+              <span class="link-block">
+                <a href="https://cvlab-kaist.github.io/Visual-Persona"
+                   class="external-link button is-normal is-rounded is-dark"
+                   style="font-size: 16px;">
+                  <span class="icon">
+                      <i class="fab fa-github"></i>
+                  </span>
+                  <span>Code (Coming Soon)</span>
+                  </a>
+              </span>
+
+              <span class="link-block">
+                <a href=""
+                   class="external-link button is-normal is-rounded is-dark"
+                   style="font-size: 16px;">
+                  <span class="icon">
+                    <img src="https://huggingface.co/front/assets/huggingface_logo.svg" alt="Hugging Face Icon" style="height: 24px; width: auto;">
+                  </span>
+                  <span>Demo (Coming Soon)</span>
+                  </a>
+              </span>
+            </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+<section class="section">
+  <div class="container is-max-desktop">
+    <div class="columns is-centered">
+      <div class="column has-text-centered">
+        <h4>Visual Persona is a foundation model for Full-Body Human Customization. <br> Our model generates diverse, customized images of an individual while preserving full-body appearance.</h4>
+      </div>
+    </div>
+    
+    <!-- TEASER SLIDER -->
+    <div class="tab-pane" id="teaser-container">
+      <div class="row" style="height: 500px; max-width: 100%; background: #f5f5f5; margin: 0; display: flex">
+          
+        <div class="col-sm-4" style="height: 100%; border-right: 2px solid #f5f5f5; max-width: 50%">
+            <img class="main-image" src="static/images/teaser/ppr10k_1/input.png" alt="Input Image">
+        </div>
+        
+          
+        <div class="col-sm-8 container">
+          <div style="position: relative;">
+              <div class="teaser-mySlides teaser-scene-0 outer-container" style="display: none;">
+                <img class="main-image" src="static/images/teaser_webp/ppr10k_1/jungle.webp">
+              </div>
+              <div id="includeContent"></div>
+              
+          
+              <a class="two-prev" data-task-name="teaser">❮</a>
+              <a class="two-next" data-task-name="teaser">❯</a>
+          
+        </div>
+      </div>
+    </div>
+    <div class="caption-container">
+        <p id="teaser-caption">pixarstyle, cartoon, a woman in pixar style sitting on a crowded street</p>
+    </div>
+    <div class="carousel-row">
+          
+      <div class="carousel-column">
+          <img class="teaser-demo cursor" src="static/images/teaser_webp/ppr10k_1/input.webp" data-scene-index="0">
+      </div>
+  
+      <div class="carousel-column">
+          <img class="teaser-demo cursor active" src="static/images/teaser_webp/ppr10k_2/input.webp" data-scene-index="1">
+      </div>
+  
+      <div class="carousel-column">
+          <img class="teaser-demo cursor" src="static/images/teaser_webp/ppr10k_3/input.webp" data-scene-index="2">
+      </div>
+  
+      <div class="carousel-column">
+          <img class="teaser-demo cursor" src="static/images/teaser_webp/sshq_1/input.webp" data-scene-index="3">
+      </div>
+  
+      <div class="carousel-column">
+          <img class="teaser-demo cursor" src="static/images/teaser_webp/sshq_2/input.webp" data-scene-index="4">
+      </div>
+
+      <div class="carousel-column">
+        <img class="teaser-demo cursor" src="static/images/teaser_webp/sshq_3/input.webp" data-scene-index="5">
+      </div>
+  
+    </div>
+  </div>
+      
+  <br>
+  <br>
+  <br>
+  <div class="container is-max-desktop">
+    <div class="columns is-centered has-text-centered">
+      <div class="column is-four-fifths">
+        <h2 class="title is-8">Applications</h2>
+      </div>
+    </div>
+    <!-- Tab Navigation -->
+    <ul class="nav nav-tabs" role="tablist">
+        <li role="presentation" class="active">
+            <a href="#tryon-container" aria-controls="tryon">Text-Guided Virtual Try-On</a>
+        </li>
+        <li role="presentation">
+            <a href="#stylization-container" aria-controls="stylization">Human Stylization</a>
+        </li>
+        <li role="presentation">
+            <a href="#character-container" aria-controls="character">Character Customization</a>
+        </li>
+        <li role="presentation">
+          <a href="#multiperson-container" aria-controls="multiperson">Multi-Person Customization</a>
+      </li>
+    </ul>
+    <!-- Tab Content -->
+    <div class="tab-content">
+      <div class="tab-pane in active" id="tryon-container"></div>
+      <div class="tab-pane fade" id="stylization-container"></div>
+      <div class="tab-pane fade" id="character-container"></div>
+      <div class="tab-pane fade" id="multiperson-container"></div>
+    
+    </div>
+    </div>
+  </div>
+  <br>
+  <!-- ABSTRACT -->
+  <div class="container is-max-desktop">
+    <div class="columns is-centered has-text-centered">
+      <div class="column is-four-fifths">
+        <h2 class="title">Abstract</h2>
+        <div class="content has-text-justified">
+          <p style="font-size: 15px;">
+            We introduce <strong>Visual Persona</strong>, a foundation model for text-to-image full-body human customization that, given a single in-the-wild human image, 
+            generates diverse images of the individual guided by text descriptions. Unlike prior methods that focus solely on preserving facial identity, 
+            our approach captures detailed full-body appearance, aligning with text descriptions for body structure and scene variations. 
+            Training this model requires large-scale paired human data, consisting of multiple images per individual with consistent full-body identities, 
+            which is notoriously difficult to obtain. To address this, we propose a data curation pipeline leveraging vision language models to evaluate full-body appearance consistency, 
+            resulting in <strong>Visual Persona-500K</strong>—a dataset of 580k paired human images across 100k unique identities. For precise appearance transfer, 
+            we introduce a transformer encoder-decoder architecture adapted to a pre-trained text-to-image diffusion model, which augments the input image into distinct body regions, 
+            encodes these regions as local appearance features, and projects them into dense identity embeddings independently to condition the diffusion model for synthesizing customized images. 
+            <strong>Visual Persona</strong> consistently surpasses existing approaches, generating high-quality, customized images from in-the-wild inputs. 
+            Extensive ablation studies validate design choices, and we demonstrate the versatility of <strong>Visual Persona</strong> across various downstream tasks. The code and pre-trained weights will be publicly available.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+    <br>
+    <div class="container is-max-desktop">
+      <div class="columns is-centered has-text-centered">
+        <div class="column is-four-fifths">
+          <h2 class="title is-8">Curating Paired Human Data</h2>
+          <img width="80%" src="static/images/data_pipeline.png" style="margin-top: 20px; margin-bottom: 10px;" display="flex">
+        </div>
+      </div>
+    </div>
+    
+    <div class="container is-max-desktop">
+          <!-- Replicate the Image and Caption below -->
+      
+      <div class="columns is-centered has-text-centered">
+        <div class="column is-four-fifths">
+          <div class="content has-text-justified" style="margin-top: 5px;">
+            <p style="font-size: 15px;">
+              <strong>Data Curation Details: </strong> 
+              (a) When two randomly selected images of the same individual are not wearing the same outfit, 
+              the individual is excluded from the dataset. (b) Otherwise, to ensure full-body consistency across all images for each retained individual, 
+              we further refine the dataset using a sliding window approach.
+            </p>
+            <br>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="container is-max-desktop">
+      <!-- First Image and Caption -->
+      <img width="100%" src="static/images/data_statistics.png" style="margin-bottom: 5px">
+      <div class="columns is-centered has-text-centered">
+        <div class="column is-four-fifths">
+          <div class="content has-text-justified" style="margin-top: 5px;">
+            <p style="font-size: 15px;">
+              <strong>Data Statistics: </strong>
+              Our curated training dataset, Visual Persona-500K, consists of 580k images representing 100k individuals. 
+              (a) illustrates the distribution of the number of images per individual, with over 50% of individuals having more than four images, and shows example image-caption pairs from the same individual. 
+              (b) highlights the diversity of individuals based on facial attributes, including race, age, and gender, which are estimated by DeepFace. 
+              (c) showcases body structure diversity, segmented into five clusters—full-body, face, torso, legs, and shoes—categorized using a body-parsing method.
+            </p>
+            <br>
+          </div>
+        </div>
+      </div>      
+    </div>
+    <br>    
+
+    <div class="container is-max-desktop">
+      
+      <div class="columns is-centered has-text-centered">
+        <div class="column is-four-fifths">
+          <h2 class="title is-8">Model Architecture</h2>
+        </div>
+      </div>
+    </div>
+
+    <div class="container is-max-desktop">
+      <img width="100%" src="static/images/main_architecture.png" style="margin-top: 20px; margin-bottom: 10px;"> <br>
+
+      <div class="columns is-centered has-text-centered">
+        <div class="column is-four-fifths">
+    
+            
+            <div class="content has-text-justified">
+              <p style="font-size: 15px;">
+                <strong>Overall Architecture: </strong>Our network augments the input human image into body regions, which are encoded into local features by an image transformer encoder. 
+                A body-partitioned transformer decoder projects these features into learnable identity embeddings via cross-attention, followed by self-attention and MLP. 
+                After M iterations, the embeddings are concatenated to form a stacked identity embedding. 
+                The identity embedding and text embedding from detailed captions condition a pre-trained T2I diffusion model to synthesize a new image with the input identity. 
+                Only the body-partitioned transformer decoder and identity cross-attention module are trained.
+              </p>
+            </div>
+          
+          <br>
+          <img width="80%" src="static/images/body_part.png" style="margin-top: 20px;"> <!-- Added margin-top for spacing -->
+          <div class="content has-text-justified" style="margin-top: 5px;">
+            <p style="font-size: 15px;">
+              <strong>Body Part Decomposition: </strong>
+              It is important for the diffusion model to attend independently to each distinct body part from the input and map it to the corresponding part in the synthesized image. 
+              To achieve this, we augment the input image (a) into N distinct body images. 
+              We (b) leverage an off-the-shelf body parsing method to parse body regions and (c) group them into N-1 categories. 
+              (d) We then extract bounding box coordinates for each category and (e) resize them to the original input size.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+        
+    <br>
+
+    
+    <div class="container is-max-desktop">
+      <div class="columns is-centered has-text-centered">
+        <div class="column is-four-fifths">
+          <h2 class="title is-8">Results</h2>
+        </div>
+      </div>
+      <img style="max-width: 100%;" src="static/images/main_qual_1.webp">
+      <img style="max-width: 100%; margin-top: -11px; margin-bottom: 10px;" src="static/images/main_qual_2.webp">
+      <div class="columns is-centered has-text-centered">
+        <div class="column is-four-fifths">
+          <div class="content has-text-justified">
+            <p style="font-size: 15px;">
+              <strong>Qualitative Comparison on SSHQ and PPR10K: </strong>Compared to prior works that focus on face identity preservation, or fail to capture the input's detailed appearance, 
+              Visual Persona accurately preserves the full-body appearance while generating diverse images based on text prompts.
+            </p>
+          </div>
+          <br>
+          <img style="max-width: 70%; margin-bottom: 10px;" src="static/images/quan_table.png">
+          <div class="content has-text-justified">
+            <p style="font-size: 15px;">
+              <strong>Quantitative Comparison: </strong>Visual Persona significantly outperforms previous methods in identity preservation (D-I), 
+              while maintaining comparable text alignment (D-T), ultimately achieving the best harmonic mean (D-H).
+            </p>
+          </div>
+          
+          <br>
+          <img style="max-width: 70%; margin-bottom: 10px;" src="static/images/human_evaluation.png">
+          <div class="content has-text-justified">
+            <p style="font-size: 15px;">
+              <strong>Human Evaluation: </strong>Unlike previous methods that are biased toward text alignment or produce artificial outputs, 
+              Visual Persona surpasses these approaches in SC, which concurrently measures identity preservation and text alignment, as well as in PQ, which evaluates image quality, 
+              achieving the highest overall score O.
+            </p>
+          </div>
+          
+        </div>
+      </div>
+      </div>
+    </div>
+    
+    </div>
+  </div>
+</section>
+
+<section class="section" id="BibTeX">
+  <div class="container is-max-desktop content">
+    <h2 class="title">BibTeX</h2>
+    <pre><code>
+</code></pre>
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="container">
+    <div class="content has-text-centered">
+      <a class="icon-link"
+         href="">
+        <i class="fas fa-file-pdf"></i>
+      </a>
+      <a class="icon-link" href="" class="external-link" disabled>
+        <i class="fab fa-github"></i>
+      </a>
+    </div>
+    <div class="columns is-centered">
+      <div class="column is-8">
+        <div class="content">
+          <p>
+            The website template was borrowed from <a href="https://cvlab-kaist.github.io/DreamMatcher/">Jisu Nam</a> and <a href="https://lehduong.github.io/OneDiffusion-homepage/">Duong H. Le</a>.
+            <!-- This website is licensed under a <a rel="license"
+                                                href="http://creativecommons.org/licenses/by-sa/4.0/">Creative
+            Commons Attribution-ShareAlike 4.0 International License</a>. -->
+          </p>
+          <!-- <p>
+            This means you are free to borrow the <a
+              href="https://ku-cvlab.github.io/DreamMatcher/">source code</a> of this website,
+            we just ask that you link back to this page in the footer.
+            Please remember to remove the analytics code included in the header of the website which
+            you do not want on your website.
+          </p> -->
+        </div>
+      </div>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>
