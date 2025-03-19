@@ -1,4 +1,3 @@
-# Visual-Persona
-Official implementation of "Visual Persona: Foundation Model for Full-Body Human Customization" (CVPR 2025)
+# Visual Persona: Foundation Model for Full-Body Human Customization (CVPR'25)
 
-Coming soon!
+Official implementation of Visual Persona. Coming soon!
