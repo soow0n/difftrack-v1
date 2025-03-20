@@ -1,5 +1,5 @@
 // Tasks and Data
-const tasks = ["teaser", "tryon", "stylization", "character", "multiperson"];
+const tasks = ["teaser", "tryon", "stylization", "character", "multiperson", "pose"];
 
 const data = {
     "teaser": {
@@ -450,6 +450,42 @@ const data = {
                 ]
             },
         ]
+    },
+    "pose": {
+        "use_20": false,
+        "use_two_sided": true,
+        "data" : [
+            {
+                title: [
+                    "A peaceful person, sitting by a fireplace in a rustic cabin, reading an old book",
+                ],
+                input_image: "static/images/application/pose-control/input.webp",
+                pose_image: "static/images/application/pose-control/pose1.webp",
+                images: [
+                    "static/images/application/pose-control/pose1_out.webp"
+                ]
+            },
+            {
+                title: [
+                    "A wistful person, walking through an autumn park, surrounded by golden leaves"
+                ],
+                input_image: "static/images/application/pose-control/input.webp",
+                pose_image: "static/images/application/pose-control/pose2.webp",
+                images: [
+                    "static/images/application/pose-control/pose2_out.webp"
+                ]
+            },
+            {
+                title: [
+                    "A reflective person, sitting on a wooden porch by a peaceful lake, watching the sunset"
+                ],
+                input_image: "static/images/application/pose-control/input.webp",
+                pose_image: "static/images/application/pose-control/pose3.webp",
+                images: [
+                    "static/images/application/pose-control/pose3_out.webp"
+                ]
+            },
+        ]
     }
 };
 
@@ -553,11 +589,19 @@ function generateSlides(taskName) {
                 `;
             });
 
-            thumbnailsHTML += `
-                <div class="carousel-column">
-                    <img class="${taskName}-demo cursor" src="${scene.input_image}" data-scene-index="${sceneIndex}" alt="${scene.title}">
-                </div>
-            `;
+            if (taskName == 'pose') {
+                thumbnailsHTML += `
+                    <div class="carousel-column">
+                        <img class="${taskName}-demo cursor" src="${scene.pose_image}" data-scene-index="${sceneIndex}" alt="${scene.title}">
+                    </div>
+                `;
+            } else {
+                thumbnailsHTML += `
+                    <div class="carousel-column">
+                        <img class="${taskName}-demo cursor" src="${scene.input_image}" data-scene-index="${sceneIndex}" alt="${scene.title}">
+                    </div>
+                `;
+            }
         });
 
         if (taskName == 'tryon') {
