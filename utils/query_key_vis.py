@@ -1,0 +1,278 @@
+import torch
+import torchvision
+import os
+import matplotlib as mpl
+import matplotlib.cm as cm
+import matplotlib.pyplot as plt
+import cv2
+import numpy as np
+from PIL import Image
+
+from sklearn.decomposition import PCA
+
+
+
+def src_pos_img(image, height, width):
+    height_circle = int((height+0.5) / 14. * 224)
+    width_circle = int((width+0.5) / 14. * 224)
+
+    image = image.permute(1, 2, 0).cpu().float().numpy() 
+    image = (image * 255).astype(np.uint8)
+    input_image = cv2.circle(image.copy(), (width_circle, height_circle), 15, (255, 255, 255), -1)        
+    input_image = cv2.circle(input_image, (width_circle, height_circle), 10, (0, 0, 255), -1)    
+            
+    input_image = Image.fromarray((input_image).astype(np.uint8))
+
+    return input_image
+
+
+
+def vis_canvas(images, log_timesteps, title, output_path):
+    num_rows = len(images)
+    num_cols = len(images[0])
+    fig, axes = plt.subplots(
+        nrows=num_rows,
+        ncols=num_cols,
+        figsize=(num_cols * 2, num_rows * 2),
+        constrained_layout=True
+    )
+    axes = np.atleast_2d(axes)
+    fig.suptitle(title, fontsize=11)
+    
+    idx = 0
+    for row in range(num_rows):
+        for col in range(num_cols):
+            ax = axes[row, col]
+            ax.imshow(images[row][col], cmap="viridis")
+            idx += 1
+            
+            # Remove ticks and spines
+            ax.set_xticks([])
+            ax.set_yticks([])
+            for spine in ["top", "right", "bottom", "left"]:
+                ax.spines[spine].set_visible(False)
+            
+            # Column labels on the top row
+            if row == 0:
+                ax.set_title(f"frame{col}", fontsize=8, pad=4)
+            
+            # Row labels on the left side of first column
+            if col == 0:
+                # Move text slightly left (negative x) and ensure it won't be clipped
+                ax.text(
+                    -0.1, 0.5,
+                    f"{log_timesteps[row]}",
+                    rotation=90, ha="center", va="center",
+                    transform=ax.transAxes,
+                    fontsize=8,
+                )
+    plt.savefig(output_path)
+    plt.close()
+
+
+
+class QueryKeyVisualizer:
+    def __init__(
+        self,
+        save_timestep_idxs,
+        save_layers,
+        output_dir,
+        model="cogvideox"
+    ):
+        self.timestep_idxs = save_timestep_idxs
+        self.layers = save_layers
+        self.output_dir = output_dir
+        self.model = model
+
+    def set_attributes(
+        self,
+        latent_h,
+        latent_w,
+        latent_f,
+        text_len,
+        timesteps,
+        frames,
+    ):
+        self.H = latent_h
+        self.W = latent_w
+        self.latent_num = latent_f
+        self.text_len = text_len
+        self.background = frames
+        self.timesteps = timesteps
+
+
+    def _get_i2i_attn_map(self, queries, keys, pos, latent_idx):
+        q_start = self.text_len
+        k_start = self.text_len + latent_idx * self.H * self.W
+        if self.model == "hunyuan_t2v":
+            q_start -= self.text_len
+            k_start -= self.text_len
+        q_end = q_start + self.H * self.W
+        k_end = k_start + self.H * self.W
+        
+        query = queries[:, q_start:q_end]
+        key = keys[:, k_start:k_end]
+
+        # Apply softmax to get attention probabilities
+        d_k = query.shape[-1]
+        attn_score = torch.matmul(query, key.transpose(-2, -1)) / torch.sqrt(torch.tensor(d_k))        
+        attn_score = torch.nn.functional.softmax(attn_score, dim=-1)
+        attn_score = attn_score.mean(0).cpu()
+
+        background = self.background[4 * latent_idx]
+        background = background.permute(1, 2, 0).cpu().numpy()
+        background = (background * 255).astype(np.uint8)
+
+        img_h, img_w, _ = background.shape
+        resize = torchvision.transforms.Resize((img_h, img_w))
+        
+        attn_score = attn_score.reshape(self.H, self.W, self.H, self.W)[pos[0], pos[1]]
+        attn_score = resize(attn_score.unsqueeze(0).unsqueeze(0)).squeeze(0).permute(1,2,0)
+        
+        normalizer = mpl.colors.Normalize(vmin=attn_score.min(), vmax=attn_score.max())
+        mapper = cm.ScalarMappable(norm=normalizer, cmap='viridis')
+        colormapped_im = (mapper.to_rgba(attn_score.to(dtype=torch.float32)[:, :, 0])[:, :, :3] * 255).astype(np.uint8)
+
+        attn_map = cv2.addWeighted(background, 0.3, colormapped_im, 0.7, 0)
+        
+        return attn_map
+    
+    
+    def _get_t2i_attn_map(self, queries, keys, pos, latent_idx):
+        q_start = 0
+        k_start = self.text_len + latent_idx * self.H * self.W
+        if self.model == "hunyuan_t2v":
+            q_start -= self.text_len
+            k_start -= self.text_len
+        q_end = q_start + self.text_len
+        k_end = k_start + self.H * self.W
+        
+        query = queries[:, q_start:q_end] if q_end > 0 else queries[:, q_start:]
+        key = keys[:, k_start:k_end]
+
+        # Apply softmax to get attention probabilities
+        d_k = query.shape[-1]
+        attn_score = torch.matmul(query, key.transpose(-2, -1)) / torch.sqrt(torch.tensor(d_k))        
+        attn_score = torch.nn.functional.softmax(attn_score, dim=-1)
+        attn_score = attn_score.mean(0).cpu()
+
+        background = self.background[4 * latent_idx]
+        background = background.permute(1, 2, 0).cpu().numpy()
+        background = (background * 255).astype(np.uint8)
+
+        img_h, img_w, _ = background.shape
+        resize = torchvision.transforms.Resize((img_h, img_w))
+        
+        attn_score = attn_score.reshape(self.text_len, self.H, self.W)[pos]
+        attn_score = attn_score.mean(0)
+        attn_score = resize(attn_score.unsqueeze(0)).permute(1,2,0)
+        
+        normalizer = mpl.colors.Normalize(vmin=attn_score.min(), vmax=attn_score.max())
+        mapper = cm.ScalarMappable(norm=normalizer, cmap='viridis')
+        colormapped_im = (mapper.to_rgba(attn_score.to(dtype=torch.float32)[:, :, 0])[:, :, :3] * 255).astype(np.uint8)
+
+        attn_map = cv2.addWeighted(background, 0.3, colormapped_im, 0.7, 0)
+        
+        return attn_map
+    
+
+    def _pca(self, features):
+
+        # features : (Frames * (H W)) * Channel
+        combined_features = features.to(torch.float32).cpu().numpy()
+        # numpy to tensor
+        
+        # --- PCA transformation ---
+        pca = PCA(n_components=3)
+        combined_features_pca = pca.fit_transform(combined_features)  # shape: [24*1024, 3]
+
+        # --- Split the PCA results back into individual features ---
+        n_features = self.latent_num
+        points_per_feature = self.H * self.W
+        
+        # List to hold the PCA-transformed images for each feature.
+        pca_maps = []
+        for i in range(n_features):
+            start = i * points_per_feature
+            end = (i + 1) * points_per_feature
+            # Get PCA result for this feature, shape: [1024, 3]
+            feature_pca = combined_features_pca[start:end]
+            # Reshape into an image of shape (32, 32, 3)
+            feature_img = feature_pca.reshape(self.H, self.W, 3)
+            # Normalize the image to the 0-255 range for display.
+            feature_img_norm = (feature_img - feature_img.min()) / (feature_img.max() - feature_img.min())
+            feature_img_norm = (feature_img_norm * 255).astype(np.uint8)
+            pca_maps.append(feature_img_norm)
+
+        return pca_maps
+        
+    
+    def save_i2i_attn_map(
+        self,
+        attn_query_keys,
+        output_dir,
+        pos,
+    ):
+        for l, layer in enumerate(self.layers):
+            attn_map_per_layer = []
+            log_timesteps = []
+            for t, t_idx in enumerate(self.timestep_idxs):
+                queries, keys = attn_query_keys[t]
+                attn_map_per_timestep = [
+                    self._get_i2i_attn_map(queries[l], keys[l], pos, latent_idx)
+                    for latent_idx in range(self.latent_num)
+                ]
+                attn_map_per_layer.append(attn_map_per_timestep)
+                log_timesteps.append(f"timestep{t_idx}({self.timesteps[t_idx]})")
+        
+            vis_canvas(
+                attn_map_per_layer,
+                log_timesteps=log_timesteps,
+                title=f"Query/Key Attention : Layer {layer}",
+                output_path=os.path.join(output_dir, f'layer{layer}.png')
+            )
+
+    
+    def save_pcas(
+        self,
+        attn_query_keys,
+        output_dir,
+    ):
+        for l, layer in enumerate(self.layers):
+            query_dir = os.path.join(output_dir, f'query')
+            key_dir = os.path.join(output_dir, f'key')
+
+            os.makedirs(query_dir, exist_ok=True)
+            os.makedirs(key_dir, exist_ok=True)
+            
+            query_pca_per_layer = []
+            key_pca_per_layer = []
+            log_timesteps = []
+
+            queries, keys = attn_query_keys[layer]
+            for t, t_idx in enumerate(self.timestep_idxs):
+                
+                if self.model == "hunyuan_t2v":
+                    query_pca_list = self._pca(queries[t][:, :-self.text_len].mean(0))
+                    key_pca_list = self._pca(keys[t][:, :-self.text_len].mean(0))
+                else:
+                    query_pca_list = self._pca(queries[t][:, self.text_len:].mean(0))
+                    key_pca_list = self._pca(keys[t][:, self.text_len:].mean(0))
+                
+                query_pca_per_layer.append(query_pca_list)
+                key_pca_per_layer.append(key_pca_list)
+                log_timesteps.append(f'timestep{self.timesteps[t_idx].item()}({t_idx})')
+            
+            vis_canvas(
+                query_pca_per_layer, 
+                log_timesteps=log_timesteps, 
+                title=f'Query PCA : Layer {layer}', 
+                output_path=os.path.join(query_dir, f'layer{layer}.png')
+            )
+            vis_canvas(
+                key_pca_per_layer, 
+                log_timesteps=log_timesteps, 
+                title=f'Key PCA : Layer {layer}', 
+                output_path=os.path.join(key_dir, f'layer{layer}.png')
+            )
+        
