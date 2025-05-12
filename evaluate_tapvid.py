@@ -250,7 +250,7 @@ def main(args):
         w = W // stride_val
 
         interval = T // 12 if args.chunk_interval else 1
-        chunk_start, chunk_end = 1, 11 * interval + 1
+        chunk_start, chunk_end = 1, (args.chunk_frame_num - 2) * interval + 1
 
         query_frames, key_frames = None, None
         visited_idx = set([])

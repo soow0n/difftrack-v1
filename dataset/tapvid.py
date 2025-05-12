@@ -130,6 +130,7 @@ class TAPVid(torch.utils.data.Dataset):
                     data = pickle.load(f)
                     points_dataset = points_dataset + data
             video_lengths = [len(data['video']) for data in points_dataset]
+            breakpoint()
             if batchfy:
                 self.points_dataset = [
                     points_dataset[i] 

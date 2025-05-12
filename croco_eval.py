@@ -6,9 +6,8 @@ import os
 import argparse
 import torch.nn.functional as F
 from einops import rearrange
-from zeroco.utils_flow.matching import corr_to_matches
-from zeroco.utils_flow.evaluation import Evaluator, compute_tapvid_metrics
-from zeroco.utils_flow.track_vis import Visualizer
+from utils.evaluation import Evaluator, compute_tapvid_metrics
+from utils.track_vis import Visualizer
 from dataset.tapvid import TAPVid
 import numpy as np
 
