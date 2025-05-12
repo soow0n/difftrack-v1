@@ -260,7 +260,6 @@ class TransformerSpatioTemporalModel(nn.Module):
                     num_attention_heads,
                     attention_head_dim,
                     cross_attention_dim=cross_attention_dim,
-                    debug=True
                 )
                 for _ in range(num_layers)
             ]

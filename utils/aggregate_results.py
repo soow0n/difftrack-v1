@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 import re
-# from utils.affinity_score import style_top_two
+from utils.affinity_score import style_top_two
 
 def parse_instance_values(file_path):
     """

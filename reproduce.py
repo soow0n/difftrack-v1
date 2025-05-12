@@ -53,7 +53,7 @@ def main(args):
 
     params = {
         'trajectory': args.pck or args.vis_track,
-        'matching_mode': args.matching_mode,
+        'matching_mode': 'qk',
         'attn_weight': args.affinity_score,
         'query_key': args.vis_attn_map,
         'video_mode': args.video_mode,
@@ -79,13 +79,6 @@ def main(args):
         if i not in selected_indices:
             continue
         
-        save_dir = os.path.join(output_dir, f'{i:03d}')
-        
-        if os.path.isfile(os.path.join(save_dir, 'pck.txt')):
-            continue
-        
-        os.makedirs(save_dir, exist_ok=True)
-        
         seed = 42
         torch.manual_seed(seed)
         random.seed(seed)
@@ -95,10 +88,13 @@ def main(args):
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
         generator = torch.manual_seed(seed)
+        
+        save_dir = os.path.join(output_dir, f'{i:03d}')
+        os.makedirs(save_dir, exist_ok=True)
 
         prompt = prompt.strip()
-        gt_track = torch.from_numpy(np.load(os.path.join(args.track_path, f'{i:03d}.npy'))).to(args.qk_device)
-        gt_visibility = torch.from_numpy(np.load(os.path.join(args.visibility_path, f'{i:03d}.npy'))).to(args.qk_device)
+        gt_track = None # torch.from_numpy(np.load(os.path.join(args.track_path, f'{i:03d}.npy'))).to(args.qk_device)
+        gt_visibility = None #torch.from_numpy(np.load(os.path.join(args.visibility_path, f'{i:03d}.npy'))).to(args.qk_device)
 
         if args.affinity_score:
             affinity_score = AffinityScore(
@@ -112,9 +108,10 @@ def main(args):
             affinity_score = None
 
         if args.pck:
+            layer_num = 60 if args.model == 'hunyuan_t2v' else 30
             pck_evaluator = PCKEvaluator(
                 timestep_num=args.num_inference_steps,
-                layer_num=pipe.transformer.config.num_layers,
+                layer_num=layer_num,
                 gt_tracks=gt_track,
                 gt_visibility=gt_visibility
             )
@@ -184,6 +181,11 @@ def main(args):
                     params=params
                 )
 
+                vis = Visualizer(save_dir=args.output_dir, pad_value=0, linewidth=3, show_first_frame=1, tracks_leave_trace=15, fps=8)
+                vis.save_video((video * 255).to(torch.uint8).byte(), filename=f"{i:03d}.mp4", writer=None, step=0)
+
+
+
             if affinity_score is not None:
                 affinity_score.report(os.path.join(save_dir, f'affinity_{args.affinity_mode}.xlsx'))
                 print(f"Affinity score ({args.affinity_mode}) saved at {os.path.join(save_dir, f'affinity_{args.affinity_mode}.xlsx')}")
@@ -250,7 +252,6 @@ if __name__=="__main__":
     parser.add_argument("--affinity_score", action='store_true')
     parser.add_argument("--affinity_mode", type=str, default='max')
     parser.add_argument("--pck", action='store_true')
-    parser.add_argument("--matching_mode", type=str, default='qk')
 
     parser.add_argument("--vis_attn_map", action='store_true')
     parser.add_argument("--pos_y", type=int, default=16)
@@ -262,8 +263,8 @@ if __name__=="__main__":
 
     parser.add_argument("--txt_path", type=str, required=True)
     parser.add_argument("--idx_path", type=str, required=True)
-    parser.add_argument("--track_path", type=str, required=True)
-    parser.add_argument("--visibility_path", type=str, required=True)
+    # parser.add_argument("--track_path", type=str, required=True)
+    # parser.add_argument("--visibility_path", type=str, required=True)
     parser.add_argument("--video_dir", type=str, default='')
     parser.add_argument("--output_dir", type=str, required=True)
 

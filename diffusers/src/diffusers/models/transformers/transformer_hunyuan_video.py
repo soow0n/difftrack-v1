@@ -214,9 +214,9 @@ class HunyuanVideoAttnProcessor2_0:
             self.attn_weight = attn_weight
             
         if args['query_key']:
-            qk_device = args['qk_device']
-            self.query = query.to(qk_device)
-            self.key = key.to(qk_device)
+            # qk_device = args['qk_device']
+            self.query = query #.to(qk_device)
+            self.key = key #.to(qk_device)
 
         # 6. Output projection
         if encoder_hidden_states is not None:
@@ -1211,7 +1211,9 @@ class HunyuanVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, 
                 )
 
         else:
-            for block in self.transformer_blocks:
+            for i, block in enumerate(self.transformer_blocks):
+                args['query_key'] = True if i in args['save_layer'] else False
+
                 hidden_states, encoder_hidden_states = block(
                     hidden_states,
                     encoder_hidden_states,
@@ -1223,7 +1225,9 @@ class HunyuanVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, 
                     **args
                 )
 
-            for block in self.single_transformer_blocks:
+            for i, block in enumerate(self.single_transformer_blocks):
+                args['query_key'] = True if (i + len(self.transformer_blocks)) in args['save_layer'] else False
+
                 hidden_states, encoder_hidden_states = block(
                     hidden_states,
                     encoder_hidden_states,

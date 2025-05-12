@@ -7,5 +7,5 @@ for f_num in 5 3; do
         --resize_h 480 --resize_w 720 \
         --chunk_interval True --chunk_frame_num $f_num \
         --save_layer 17 --save_timestep 49 --inverse_step 49 \
-        --pipe_device cuda:4 --qk_device cuda:4
+        --pipe_device cuda:7 --qk_device cuda:7
 done

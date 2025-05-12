@@ -37,12 +37,16 @@ def process_chunk(
     inverse_step,
     add_noise=False,
     inversion_pipe=None,
+    model_name="cogvideox_t2v"
 ):
-    # Convert the chunk (first video in the batch) to a list of PIL images.
-    to_pil = ToPILImage()
-    chunk_video = torch.cat([first_frame] + [chunk_video[:, i:i+1, ...] for i in range(chunk_video.size(1))], dim=1)
-    video_pil = [to_pil(frame.to(dtype=torch.uint8)) for frame in chunk_video[0]]
-    _, _, _, H, W = chunk_video.shape 
+
+    chunk_video = torch.cat([first_frame, chunk_video], dim=1) / 255.
+    _, _, _, H, W = first_frame.shape 
+
+    if "hunyuan" in model_name:
+        num_inference_steps = 30
+    else:
+        num_inference_steps = 50
 
     # Run the inversion and generation pipelines.
     with torch.no_grad():
@@ -52,9 +56,9 @@ def process_chunk(
                 height=H,
                 width=W,
                 prompt="",
-                video=video_pil,
+                video=chunk_video,
                 num_videos_per_prompt=1,
-                num_inference_steps=50,
+                num_inference_steps=num_inference_steps,
                 inverse_step=inverse_step,
                 use_dynamic_cfg=True,
                 guidance_scale=6,
@@ -62,23 +66,44 @@ def process_chunk(
                 params=PARAMS
             )
         
-        frames, queries, keys, text_seq_length = pipe(
-            height=H,
-            width=W,
-            prompt="",
-            guidance_scale=6,
-            num_inference_steps=50,
-            generator=generator,
-            latents=latents,
-            video=video_pil,
-            frame_as_latent=True,
-            inverse_step=inverse_step,
-            save_timestep=save_timestep,
-            save_layer=save_layer,
-            add_noise=add_noise,
-            return_dict=False,
-            params=PARAMS
-        )
+        if "i2v" in model_name:
+            to_pil = ToPILImage()
+            frames, queries, keys, text_seq_length = pipe(
+                image=to_pil(first_frame[0,0]),
+                height=H,
+                width=W,
+                prompt="",
+                guidance_scale=6,
+                num_inference_steps=num_inference_steps,
+                generator=generator,
+                latents=latents,
+                video=chunk_video,
+                frame_as_latent=True,
+                inverse_step=inverse_step,
+                save_timestep=save_timestep,
+                save_layer=save_layer,
+                add_noise=add_noise,
+                return_dict=False,
+                params=PARAMS
+            )
+        else:
+            frames, queries, keys, text_seq_length = pipe(
+                height=H,
+                width=W,
+                prompt="",
+                guidance_scale=6,
+                num_inference_steps=num_inference_steps,
+                generator=generator,
+                latents=latents,
+                video=chunk_video,
+                frame_as_latent=True,
+                inverse_step=inverse_step,
+                save_timestep=save_timestep,
+                save_layer=save_layer,
+                add_noise=add_noise,
+                return_dict=False,
+                params=PARAMS
+            )
 
     stride = 16
     h = H // stride
@@ -89,9 +114,13 @@ def process_chunk(
     queries = torch.cat(queries, dim=-1)
     keys = torch.cat(keys, dim=-1)
 
-    query_frames = rearrange(queries[:, text_seq_length:][None,...], 'b head (f h w) c -> b head f (h w) c', f=f_num, h=h, w=w)
-    key_frames = rearrange(keys[:, text_seq_length:][None,...], 'b head (f h w) c -> b head f (h w) c', f=f_num, h=h, w=w)
-    
+    if "cogvideox" in model_name:
+        query_frames = rearrange(queries[:, text_seq_length:][None,...], 'b head (f h w) c -> b head f (h w) c', f=f_num, h=h, w=w)
+        key_frames = rearrange(keys[:, text_seq_length:][None,...], 'b head (f h w) c -> b head f (h w) c', f=f_num, h=h, w=w)
+    elif "hunyuan" in model_name:
+        query_frames = rearrange(queries[:, :-text_seq_length][None,...], 'b head (f h w) c -> b head f (h w) c', f=f_num, h=h, w=w)
+        key_frames = rearrange(keys[:, :-text_seq_length][None,...], 'b head (f h w) c -> b head f (h w) c', f=f_num, h=h, w=w)
+
     return query_frames, key_frames
 
 def combine_correlations(correlations, average_overlap=False):
@@ -107,12 +136,13 @@ def combine_correlations(correlations, average_overlap=False):
 
 
 def main(args):
+    from torchvision.transforms import ToPILImage
+    to_pil = ToPILImage()
 
     if args.chunk_interval:
         stride = 1
     else:
         stride = args.stride
-
 
     inverse_step = args.inverse_step if args.inverse_step in range(50) else min(args.save_timestep)
     output_dir = os.path.join(args.output_dir, f'{args.eval_dataset}_layer{args.save_layer}_inverse{inverse_step}_timestep{args.save_timestep}_stride{stride}_interval{args.chunk_interval}_overlap{args.average_chunk_overlap}_inversion{args.do_inversion}_noise{args.add_noise}')
@@ -132,35 +162,60 @@ def main(args):
     torch.backends.cudnn.benchmark = False
     generator = torch.manual_seed(seed)
 
+    batchfy = args.batch_size > 1
     # Set up the dataset and evaluator.
-    dataset = TAPVid(args, visualize=False)
-    dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False, num_workers=4, drop_last=False, pin_memory=True)
+    dataset = TAPVid(args, batchfy=batchfy)
+    batch_size = args.batch_size if args.eval_dataset == 'kinetics_first' else 1
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=8, drop_last=False, pin_memory=True)
     evaluator = Evaluator(zero_shot=True)
     queried_first = "first" in args.eval_dataset
 
-    # Load the pipelines.
-    pipe = CogVideoXTrackPipeline.from_pretrained("THUDM/CogVideoX-2b", torch_dtype=torch.bfloat16)
-    pipe.scheduler = CogVideoXDDIMScheduler.from_config(pipe.scheduler.config, timestep_spacing="trailing")
-    pipe.to(device=args.pipe_device, dtype=torch.bfloat16)
+    if args.model == "cogvideox_t2v":
+        # Load the pipelines.
+        pipe = CogVideoXTrackPipeline.from_pretrained("THUDM/CogVideoX-2b", torch_dtype=torch.bfloat16)
+        pipe.scheduler = CogVideoXDDIMScheduler.from_config(pipe.scheduler.config, timestep_spacing="trailing")
+        pipe.to(device=args.pipe_device, dtype=torch.bfloat16)
+    elif args.model == "cogvideox_i2v":
+        pipe = CogVideoXImageToVideoTrackPipeline2B.from_pretrained(
+            "NimVideo/cogvideox-2b-img2vid",
+            torch_dtype=torch.bfloat16
+        ).to(device=args.pipe_device)
+        pipe.scheduler = CogVideoXDDIMScheduler.from_config(pipe.scheduler.config, timestep_spacing="trailing")
+    elif args.model == "hunyuan_t2v":
+        args.do_inversion = False
+        model_id = "hunyuanvideo-community/HunyuanVideo"
+        transformer = HunyuanVideoTransformer3DModel.from_pretrained(
+            model_id, subfolder="transformer", torch_dtype=torch.bfloat16
+        )
+        pipe = HunyuanVideoTrackPipeline.from_pretrained(
+            model_id, transformer=transformer, 
+            torch_dtype=torch.bfloat16
+        ).to(device=args.pipe_device)
+    
     pipe.vae.enable_slicing()
     pipe.vae.enable_tiling()
 
     inversion_pipe = None
-    if args.do_inversion:
+    if args.do_inversion and "cogvideox" in args.model:
         inversion_pipe = CogVideoXInversePipeline.from_pretrained("THUDM/CogVideoX-2b", torch_dtype=torch.bfloat16)
         inversion_pipe.scheduler = CogVideoXDDIMScheduler.from_config(inversion_pipe.scheduler.config, timestep_spacing="trailing")
         inversion_pipe.to(device=args.inv_pipe_device, dtype=torch.bfloat16)
         inversion_pipe.vae.enable_slicing()
         inversion_pipe.vae.enable_tiling()
+    elif "hunyuan" in args.model:
+        # TODO: hunyuan inversion pipeline
+        pass
 
     PARAMS['qk_device'] = args.qk_device
     
     save_timestep = args.save_timestep
     save_layer = args.save_layer
-    
-    video_ori = None
-    for j, (video, gt_trajectory, visibility, query_points_i) in enumerate(dataloader): 
-        if args.chunk_frame_num == 3 and j < 22:
+
+    PARAMS['save_layer'] = save_layer
+
+    for j, (video, gt_trajectory, visibility, query_points_i, video_ori) in enumerate(dataloader):
+        if args.model == 'hunyuan_t2v' and j <= 9: 
+            evaluator.cnt += 1
             continue
 
         valid_mask = (query_points_i[:,:,0] == 0)
@@ -182,17 +237,20 @@ def main(args):
             gt_trajectory_vis = gt_trajectory.clone()
             gt_trajectory_vis[..., 0] *= (W / 256)
             gt_trajectory_vis[..., 1] *= (H / 256)
-            vis = Visualizer(save_dir=os.path.join(output_dir, 'gt'), pad_value=120, linewidth=3, show_first_frame=1)
-            vis.visualize(video=video, tracks=gt_trajectory_vis, filename =f"{j:03d}.mp4", query_frame=0, visibility=visibility)
+            vis = Visualizer(save_dir=os.path.join(output_dir, 'gt'), pad_value=0, linewidth=3, show_first_frame=1, tracks_leave_trace=args.tracks_leave_trace)
+            frames = vis.visualize(video=video, tracks=gt_trajectory_vis, filename =f"{j:03d}.mp4", query_frame=0, visibility=visibility)
             
+            gt_dir = os.path.join(output_dir, 'gt', f'{j:03d}')
+            os.makedirs(gt_dir, exist_ok=True)
+            for f, frame in enumerate(frames[0]):
+                to_pil(frame).save(os.path.join(gt_dir, f'{f}.png'))
 
         stride_val = 16
         h = H // stride_val
         w = W // stride_val
 
-        chunk_len = args.chunk_frame_num - 1
         interval = T // 12 if args.chunk_interval else 1
-        chunk_start, chunk_end = 1, chunk_len * interval + 1
+        chunk_start, chunk_end = 1, 11 * interval + 1
 
         query_frames, key_frames = None, None
         visited_idx = set([])
@@ -214,10 +272,10 @@ def main(args):
                 first_frame=video[:,0:1,...],
                 add_noise=args.add_noise,
                 inversion_pipe=inversion_pipe,
+                model_name=args.model
             )
             
             B, head_dim, qk_len, _, _ = query_frames.shape
-
             corr = []
             for k in range(1, qk_len):
                 attn_tts = torch.einsum("b h i d, b h j d -> b h i j", query_frames[:, :, 0, :, :], key_frames[:, :, k, :, :]) / math.sqrt(head_dim)
@@ -232,7 +290,7 @@ def main(args):
                 corr.append(correlation_from_t_to_s)
             correlation_per_chunk.append((chunk_indices, corr))
             chunk_start += stride
-            chunk_end = min(chunk_start + chunk_len * interval, T-1)
+            chunk_end = min(chunk_start + 11 * interval, T-1)
             
         correlation = combine_correlations(correlation_per_chunk, average_overlap=args.average_chunk_overlap)
 
@@ -275,18 +333,15 @@ def main(args):
         trajectory[..., 0] *= scaling_factor_x
         trajectory[..., 1] *= scaling_factor_y
 
-        if args.vis_video:
-            from torchvision.transforms import ToPILImage
-            to_pil = ToPILImage()
-            
+        if args.vis_video:            
             vis = Visualizer(save_dir=os.path.join(output_dir, 'pred'), pad_value=0, linewidth=3, show_first_frame=1, tracks_leave_trace=args.tracks_leave_trace)
             frames = vis.visualize(video=video_ori, tracks=trajectory, filename =f"{j:03d}.mp4", query_frame=0, visibility=visibility)
             
-            # pred_dir = os.path.join(output_dir, 'pred', f'{j:03d}')
-            # os.makedirs(pred_dir, exist_ok=True)
-            # for f, frame in enumerate(frames[0]):
-            #     to_pil(frame).save(os.path.join(pred_dir, f'{f}.png'))
-        # breakpoint()
+            pred_dir = os.path.join(output_dir, 'pred', f'{j:03d}')
+            os.makedirs(pred_dir, exist_ok=True)
+            for f, frame in enumerate(frames[0]):
+                to_pil(frame).save(os.path.join(pred_dir, f'{f}.png'))
+
         query_points_np = query_points_i.clone().cpu().numpy()
         gt_tracks = gt_trajectory.clone().permute(0, 2, 1, 3)[:, :, :trajectory.shape[1], :].cpu().numpy()
         gt_occluded = torch.logical_not(visibility.clone().permute(0, 2, 1)).cpu().numpy()
@@ -299,13 +354,13 @@ def main(args):
         evaluator.update(out_metrics, T, log_file=os.path.join(output_dir, 'log.txt'))
         
 
-
     evaluator.report(log_file=os.path.join(output_dir, 'log.txt'))
     print(f"Evaluation result saved at {output_dir}")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    parser.add_argument("--model", type=str, default='cogvideox_t2v')
     parser.add_argument("--output_dir", type=str, default='./output')
     parser.add_argument('--tapvid_root', type=str)
     parser.add_argument('--eval_dataset', type=str, choices=["davis_first", "rgb_stacking_first", "kinetics_first"], default="davis_first")
@@ -315,7 +370,6 @@ if __name__ == "__main__":
 
     parser.add_argument('--stride', type=int, default=12)
     parser.add_argument('--chunk_interval', type=bool, default=True)
-    parser.add_argument('--chunk_frame_num', type=int, default=12)
     parser.add_argument('--average_chunk_overlap', type=bool, default=False)
     parser.add_argument("--video_max_len", type=int, default=-1)
     parser.add_argument("--do_inversion", type=bool, default=False)
@@ -326,7 +380,7 @@ if __name__ == "__main__":
     parser.add_argument("--inverse_step", type=int, default=None)
     
     parser.add_argument("--vis_video", type=bool, default=False)
-    parser.add_argument("--tracks_leave_trace", type=int, default=0)
+    parser.add_argument("--tracks_leave_trace", type=int, default=15)
 
     parser.add_argument("--pipe_device", type=str, default='cuda:0')
     parser.add_argument("--inv_pipe_device", type=str, default='cuda:0')
@@ -334,6 +388,7 @@ if __name__ == "__main__":
 
     parser.add_argument('--start', type=int, default=0)
     parser.add_argument('--end', type=int, default=0)
+    parser.add_argument('--batch_size', type=int, default=4)
 
     args = parser.parse_args()
 

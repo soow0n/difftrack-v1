@@ -242,12 +242,20 @@ class StableVideoDiffusionPipeline(DiffusionPipeline):
         device: Union[str, torch.device],
         num_videos_per_prompt: int,
         do_classifier_free_guidance: bool,
+        mode='image'
     ):
         image = image.to(device=device)
-        image_latents = self.vae.encode(image).latent_dist.mode()
+        if mode == 'image':
+            image_latents = self.vae.encode(image).latent_dist.mode()
+            image_latents = image_latents.repeat(num_videos_per_prompt, 1, 1, 1)
+        else:
+            image_latents = [
+                self.vae.encode(image[:,:,i]).latent_dist.sample() for i in range(image.size(2))
+            ]
+            image_latents = torch.stack(image_latents, dim=0).permute(1, 0, 2, 3, 4)
 
-        # duplicate image_latents for each generation per prompt, using mps friendly method
-        image_latents = image_latents.repeat(num_videos_per_prompt, 1, 1, 1)
+            # duplicate image_latents for each generation per prompt, using mps friendly method
+            image_latents = image_latents.repeat(num_videos_per_prompt, 1, 1, 1, 1)
 
         if do_classifier_free_guidance:
             negative_image_latents = torch.zeros_like(image_latents)
@@ -499,7 +507,6 @@ class StableVideoDiffusionPipeline(DiffusionPipeline):
         # of the Imagen paper: https://arxiv.org/pdf/2205.11487.pdf . `guidance_scale = 1`
         # corresponds to doing no classifier free guidance.
         self._guidance_scale = max_guidance_scale
-
         # 3. Encode input image
         image_embeddings = self._encode_image(image, device, num_videos_per_prompt, self.do_classifier_free_guidance)
 
@@ -521,6 +528,7 @@ class StableVideoDiffusionPipeline(DiffusionPipeline):
             device=device,
             num_videos_per_prompt=num_videos_per_prompt,
             do_classifier_free_guidance=self.do_classifier_free_guidance,
+            mode='image'
         )
         image_latents = image_latents.to(dtype=image_embeddings.dtype)
 
@@ -529,22 +537,20 @@ class StableVideoDiffusionPipeline(DiffusionPipeline):
         image_latents = image_latents.unsqueeze(1).repeat(1, num_frames, 1, 1, 1)
 
         # 4-2. Encode input video using VAE
-        video = self.video_processor.preprocess(video, height=height, width=width).to(device)
+        video = self.video_processor.preprocess_video(video, height=height, width=width).to(device)
+        # noise = randn_tensor(video.shape, generator=generator, device=device, dtype=video.dtype)
+        # video = video + noise_aug_strength * noise
 
-        video_latents = self._encode_vae_image(
-            video,
-            device=device,
-            num_videos_per_prompt=num_videos_per_prompt,
-            do_classifier_free_guidance=False,
-        )
+        video_latents = self._encode_vae_image(video, device=device, num_videos_per_prompt=num_videos_per_prompt, do_classifier_free_guidance=False, mode='video')
         video_latents = video_latents.to(image_embeddings.dtype)
+        video_latents *= self.vae.config.scaling_factor
 
          # cast back to fp16 if needed
         if needs_upcasting:
             self.vae.to(dtype=torch.float16)
 
         image_latents = image_latents.to(dtype=torch.float16)
-        video_latents = video_latents.to(dtype=torch.float16).unsqueeze(0)
+        video_latents = video_latents.to(dtype=torch.float16)
 
 
         # 5. Get Added Time IDs
@@ -564,17 +570,9 @@ class StableVideoDiffusionPipeline(DiffusionPipeline):
 
         # 7. Prepare latent variables
         num_channels_latents = self.unet.config.in_channels
-        latents = self.prepare_latents(
-            batch_size * num_videos_per_prompt,
-            num_frames,
-            num_channels_latents,
-            height,
-            width,
-            image_embeddings.dtype,
-            device,
-            generator,
-            video_latents,
-        )
+        # noise = randn_tensor(video.shape, generator=generator, device=device, dtype=video.dtype)
+        latents = video_latents # + noise * self.scheduler.sigmas[-2]
+        # latents = latents / ((self.scheduler.sigmas[-1]**2 + 1) ** 0.5)
 
         # 8. Prepare guidance scale
         guidance_scale = torch.linspace(min_guidance_scale, max_guidance_scale, num_frames).unsqueeze(0)
@@ -583,7 +581,6 @@ class StableVideoDiffusionPipeline(DiffusionPipeline):
         guidance_scale = _append_dims(guidance_scale, latents.ndim)
 
         self._guidance_scale = guidance_scale
-
         # 9. Denoising loop
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
         self._num_timesteps = len(timesteps)
@@ -606,11 +603,16 @@ class StableVideoDiffusionPipeline(DiffusionPipeline):
                     return_dict=False,
                 )[0]
 
-                breakpoint()
-                
+                query = [
+                    attn.transformer_blocks[0].attn1.processor.query
+                    for attn in self.unet.up_blocks[2].attentions
+                ]
+                key = [
+                    attn.transformer_blocks[0].attn1.processor.key
+                    for attn in self.unet.up_blocks[2].attentions
+                ]
 
-                query = self.unet.up_blocks[2].attentions[-1].temporal_transformer_blocks[0].attn1.processor.query
-                key = self.unet.up_blocks[2].attentions[-1].temporal_transformer_blocks[0].attn1.processor.key
+                # t_hidden_states = [attn.t_hidden_states for attn in self.unet.up_blocks[2].attentions]
 
                 # perform guidance
                 if self.do_classifier_free_guidance:
@@ -647,7 +649,6 @@ class StableVideoDiffusionPipeline(DiffusionPipeline):
 
         if not return_dict:
             return frames, query, key
-
         return StableVideoDiffusionPipelineOutput(frames=frames)
 
 

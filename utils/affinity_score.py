@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 import torch
-
+import os
 
 def style_top_two(s):
     """
@@ -52,7 +52,9 @@ class AffinityScore():
         index = pd.MultiIndex.from_product([time_steps, sub_rows],
                                         names=["timestep", "type"])
         self.columns = [f"layer{i}" for i in range(num_layers)]
-        self.attention_df = pd.DataFrame(index=index, columns=self.columns, dtype=float)
+        self.attention_max_df = pd.DataFrame(index=index, columns=self.columns, dtype=float)
+        self.attention_sum_df = pd.DataFrame(index=index, columns=self.columns, dtype=float)
+
 
         self.model = model
         self.mode = mode
@@ -72,23 +74,34 @@ class AffinityScore():
         
 
     def update(self, attn_weight, layer, timestep_idx):
-        if self.mode == 'max':
-            text_score, self_score, cross_score = self._update_max(attn_weight)
-        else:
-            text_score, self_score, cross_score = self._update_sum(attn_weight)
+        text_score, self_score, cross_score = self._update_max(attn_weight)
 
         text_score_grid_mean = text_score.mean(dim=-1)
         self_score_grid_mean = self_score.mean(dim=-1)
         cross_score_grid_mean = cross_score.mean(dim=-1)
 
-        self.attention_df.loc[(f"timestep{timestep_idx}", "self"), f"layer{layer}"] = round(self_score_grid_mean.item(), 4)
-        self.attention_df.loc[(f"timestep{timestep_idx}", "cross"), f"layer{layer}"] = round(cross_score_grid_mean.item(), 4)
-        self.attention_df.loc[(f"timestep{timestep_idx}", "text"), f"layer{layer}"] = round(text_score_grid_mean.item(), 4)
+        self.attention_max_df.loc[(f"timestep{timestep_idx}", "self"), f"layer{layer}"] = round(self_score_grid_mean.item(), 4)
+        self.attention_max_df.loc[(f"timestep{timestep_idx}", "cross"), f"layer{layer}"] = round(cross_score_grid_mean.item(), 4)
+        self.attention_max_df.loc[(f"timestep{timestep_idx}", "text"), f"layer{layer}"] = round(text_score_grid_mean.item(), 4)
 
 
-    def report(self, log_file='output.xlsx'):
-        styled_df = self.attention_df.style.apply(style_top_two, subset=self.columns, axis=0)
-        styled_df.to_excel(log_file, engine='openpyxl')
+        text_score, self_score, cross_score = self._update_sum(attn_weight)
+
+        text_score_grid_mean = text_score.mean(dim=-1)
+        self_score_grid_mean = self_score.mean(dim=-1)
+        cross_score_grid_mean = cross_score.mean(dim=-1)
+
+        self.attention_sum_df.loc[(f"timestep{timestep_idx}", "self"), f"layer{layer}"] = round(self_score_grid_mean.item(), 4)
+        self.attention_sum_df.loc[(f"timestep{timestep_idx}", "cross"), f"layer{layer}"] = round(cross_score_grid_mean.item(), 4)
+        self.attention_sum_df.loc[(f"timestep{timestep_idx}", "text"), f"layer{layer}"] = round(text_score_grid_mean.item(), 4)
+
+
+    def report(self, log_dir='output'):
+        styled_max_df = self.attention_max_df.style.apply(style_top_two, subset=self.columns, axis=0)
+        styled_max_df.to_excel(os.path.join(log_dir, 'affinity_max.xlsx'), engine='openpyxl')
+
+        styled_sum_df = self.attention_sum_df.style.apply(style_top_two, subset=self.columns, axis=0)
+        styled_sum_df.to_excel(os.path.join(log_dir, 'affinity_sum.xlsx'), engine='openpyxl')
         
         
 

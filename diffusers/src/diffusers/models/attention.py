@@ -658,11 +658,9 @@ class TemporalBasicTransformerBlock(nn.Module):
         num_attention_heads: int,
         attention_head_dim: int,
         cross_attention_dim: Optional[int] = None,
-        debug=False
     ):
         super().__init__()
         self.is_res = dim == time_mix_inner_dim
-        self.debug = debug
         self.norm_in = nn.LayerNorm(dim)
 
         # Define 3 blocks. Each block has its own normalization layer.
@@ -740,13 +738,13 @@ class TemporalBasicTransformerBlock(nn.Module):
             hidden_states = hidden_states + residual
 
         norm_hidden_states = self.norm1(hidden_states)
-        attn_output = self.attn1(norm_hidden_states, encoder_hidden_states=None, debug=self.debug)
+        attn_output = self.attn1(norm_hidden_states, encoder_hidden_states=None)
         hidden_states = attn_output + hidden_states
 
         # 3. Cross-Attention
         if self.attn2 is not None:
             norm_hidden_states = self.norm2(hidden_states)
-            attn_output = self.attn2(norm_hidden_states, encoder_hidden_states=encoder_hidden_states, debug=self.debug)
+            attn_output = self.attn2(norm_hidden_states, encoder_hidden_states=encoder_hidden_states)
             hidden_states = attn_output + hidden_states
 
         # 4. Feed-forward

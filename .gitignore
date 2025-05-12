@@ -173,6 +173,7 @@ dump*
 
 !requirements.txt
 
+*.png
 *.npy
 *.mp4
 debug/

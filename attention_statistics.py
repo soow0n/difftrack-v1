@@ -1,6 +1,6 @@
 import argparse
 import torch
-from diffusers import CogVideoXImageToVideoPipeline2B, CogVideoXPipeline, HunyuanVideoTransformer3DModel, HunyuanVideoPipeline
+from diffusers import CogVideoXPipeline, CogVideoXImageToVideoPipeline2B, HunyuanVideoTransformer3DModel, HunyuanVideoPipeline
 import os
 import glob
 import random
@@ -53,7 +53,7 @@ def main(args):
 
     params = {
         'trajectory': args.pck or args.vis_track,
-        'matching_mode': 'qk',
+        'matching_mode': args.matching_mode,
         'attn_weight': args.affinity_score,
         'query_key': args.vis_attn_map,
         'video_mode': args.video_mode,
@@ -76,9 +76,18 @@ def main(args):
         selected_indices = sorted([int(index.strip()) for index in indices])
 
     for i, prompt in enumerate(prompts):
-        if i not in [8, 10]:
+        if i not in selected_indices:
             continue
-
+        
+        seed = 42
+        torch.manual_seed(seed)
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+        generator = torch.manual_seed(seed)
         
         save_dir = os.path.join(output_dir, f'{i:03d}')
         os.makedirs(save_dir, exist_ok=True)
@@ -216,9 +225,9 @@ def main(args):
                     query_frame=0
                 )
                 
-                # to_pil = ToPILImage()
-                # for f in range(49):
-                #     to_pil(frames[0,f]).save(os.path.join(track_dir, f'{f}.png'))
+                to_pil = ToPILImage()
+                for f in range(49):
+                    to_pil(frames[0,f]).save(os.path.join(track_dir, f'{f}.png'))
 
 
     if args.pck:
@@ -238,6 +247,7 @@ if __name__=="__main__":
     parser.add_argument("--affinity_score", action='store_true')
     parser.add_argument("--affinity_mode", type=str, default='max')
     parser.add_argument("--pck", action='store_true')
+    parser.add_argument("--matching_mode", type=str, default='qk')
 
     parser.add_argument("--vis_attn_map", action='store_true')
     parser.add_argument("--pos_y", type=int, default=16)
@@ -256,6 +266,7 @@ if __name__=="__main__":
 
     parser.add_argument("--device", type=str, default='cuda:0')
     parser.add_argument("--qk_device", type=str, default='cuda:0')
+
     
     args = parser.parse_args()
 

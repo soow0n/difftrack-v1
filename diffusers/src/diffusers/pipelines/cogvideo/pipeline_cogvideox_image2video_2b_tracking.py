@@ -100,8 +100,8 @@ class CogVideoXImageToVideoTrackPipeline2B(CogVideoXPipeline):
         
             latents = self.vae_scaling_factor_image * init_latents
             if add_noise and timestep is not None:
-                noise = randn_tensor(shape, generator=generator, device=device, dtype=dtype)
-                latents = self.scheduler.add_noise(latents, noise, timestep)
+                noise = randn_tensor(latents.shape, generator=generator, device=device, dtype=dtype)
+                latents = self.scheduler.add_noise(latents, noise, torch.tensor(timestep))
             latents = latents * self.scheduler.init_noise_sigma
         
         latents = latents.to(device)
@@ -200,7 +200,6 @@ class CogVideoXImageToVideoTrackPipeline2B(CogVideoXPipeline):
         timesteps, num_inference_steps = retrieve_timesteps(self.scheduler, num_inference_steps, device, timesteps)
         self._num_timesteps = len(timesteps)
 
-
         # 5. Prepare latents.
         if latents is None:
             video = self.video_processor.preprocess_video(video, height=height, width=width)
@@ -222,7 +221,7 @@ class CogVideoXImageToVideoTrackPipeline2B(CogVideoXPipeline):
             timestep=inverse_step,
             add_noise=add_noise,
         )
-
+        
         ## 5.1 Prepare image
         start_frame = None
         if image is not None: 
@@ -278,7 +277,7 @@ class CogVideoXImageToVideoTrackPipeline2B(CogVideoXPipeline):
                     args=params
                 )[0]
                 noise_pred = noise_pred.float()
-
+                
                 if i in save_timestep:
                     with torch.no_grad():
                         for l in save_layer:

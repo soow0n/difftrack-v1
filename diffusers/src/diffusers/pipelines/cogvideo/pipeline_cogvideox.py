@@ -525,7 +525,9 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
         max_sequence_length: int = 226,
         affinity_score=None,
-        pck_evaluator=None,
+        qk_pck_evaluator=None,
+        feat_pck_evaluator=None,
+        head_pck_evaluator=None,
         querykey_visualizer=None,
         vis_timesteps=None,
         vis_layers=None,
@@ -845,12 +847,9 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
                         trajectory[..., 0] *= scaling_factor_x  # X축 스케일링
                         trajectory[..., 1] *= scaling_factor_y  # Y축 스케일링
 
-                        for head_idx in range(trajectory.shape[0]):
-                            pck_evaluator.update(pred_tracks=trajectory[head_idx].unsqueeze(0), layer=head_idx, timestep_idx=i)
-                
-                    for blk in self.transformer.transformer_blocks:
-                        del blk.attn1.processor.query
-                        del blk.attn1.processor.key
+                        if head_pck_evaluator is not None:
+                            for head_idx in range(trajectory.shape[0]):
+                                head_pck_evaluator.update(pred_tracks=trajectory[head_idx].unsqueeze(0), layer=head_idx, timestep_idx=i)
 
                 for l, blk in enumerate(self.transformer.transformer_blocks):
                     if params['attn_weight']:
@@ -859,27 +858,35 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
                         del blk.attn1.processor.attn_weight
                     
                     if params['trajectory']:
-                        trajectory = blk.attn1.processor.trajectory
-                        if pck_evaluator is not None:
-                            pck_evaluator.update(pred_tracks=trajectory, layer=l, timestep_idx=i)
-                        
+                        trajectory = blk.attn1.processor.trajectory_qk
+                        if qk_pck_evaluator is not None:
+                            qk_pck_evaluator.update(pred_tracks=trajectory, layer=l, timestep_idx=i)
+
                         if vis_timesteps[0] == i and vis_layers[0] == l:
                             vis_trajectory = trajectory
-                        
-                        del blk.attn1.processor.trajectory
 
-                # if params['query_key'] and querykey_visualizer is not None:
-                #     if i in vis_timesteps:
-                #         queries_, keys_ = [], []
-                #         for l in vis_layers:
-                #             blk = self.transformer.transformer_blocks[l]
-                #             Q = blk.attn1.processor.query[1]
-                #             K = blk.attn1.processor.key[1]
-                #             queries_.append(Q)
-                #             keys_.append(K)
-                #             del blk.attn1.processor.query
-                #             del blk.attn1.processor.key
-                #         attn_query_keys.append([queries_, keys_])
+                        trajectory = blk.attn1.processor.trajectory_feat
+                        if feat_pck_evaluator is not None:
+                            feat_pck_evaluator.update(pred_tracks=trajectory, layer=l, timestep_idx=i)
+                        
+                        del blk.attn1.processor.trajectory_qk
+                        del blk.attn1.processor.trajectory_feat
+                    if params['query_key']:
+                        del blk.attn1.processor.query
+                        del blk.attn1.processor.key
+
+                if params['query_key'] and querykey_visualizer is not None:
+                    if i in vis_timesteps:
+                        queries_, keys_ = [], []
+                        for l in vis_layers:
+                            blk = self.transformer.transformer_blocks[l]
+                            Q = blk.attn1.processor.query[1]
+                            K = blk.attn1.processor.key[1]
+                            queries_.append(Q)
+                            keys_.append(K)
+                            del blk.attn1.processor.query
+                            del blk.attn1.processor.key
+                        attn_query_keys.append([queries_, keys_])
                             
                 if use_dynamic_cfg:
                     self._guidance_scale = 1 + guidance_scale * (
