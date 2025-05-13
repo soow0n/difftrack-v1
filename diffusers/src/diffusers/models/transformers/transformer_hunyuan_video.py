@@ -1212,6 +1212,7 @@ class HunyuanVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, 
 
         else:
             for i, block in enumerate(self.transformer_blocks):
+                if i > args['save_layer'][0]: break
                 args['query_key'] = True if i in args['save_layer'] else False
 
                 hidden_states, encoder_hidden_states = block(
@@ -1226,6 +1227,7 @@ class HunyuanVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, 
                 )
 
             for i, block in enumerate(self.single_transformer_blocks):
+                if (i + len(self.transformer_blocks)) > args['save_layer'][0]: break
                 args['query_key'] = True if (i + len(self.transformer_blocks)) in args['save_layer'] else False
 
                 hidden_states, encoder_hidden_states = block(
