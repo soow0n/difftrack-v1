@@ -149,8 +149,7 @@ def main(args):
     PARAMS['qk_device'] = args.qk_device
     
     for j, (video, gt_trajectory, visibility, query_points_i, video_ori) in enumerate(dataloader): 
-        if args.eval_dataset == 'davis_first' and j not in [5, 6, 17, 18, 21, 24, 27]: continue
-
+        
         valid_mask = (query_points_i[:,:,0] == 0)
         if not torch.any(valid_mask):
             continue
@@ -304,7 +303,7 @@ if __name__ == "__main__":
     parser.add_argument("--add_noise", type=bool, default=False)
 
     parser.add_argument("--vis_video", type=bool, default=False)
-    parser.add_argument("--tracks_leave_trace", type=int, default=0)
+    parser.add_argument("--tracks_leave_trace", type=int, default=15)
 
     parser.add_argument("--pipe_device", type=str, default='cuda:0')
     parser.add_argument("--inv_pipe_device", type=str, default='cuda:0')

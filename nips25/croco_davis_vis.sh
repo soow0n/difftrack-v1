@@ -1,7 +1,7 @@
-CUDA_VISIBLE_DEVICES=7 python croco_eval.py \
+CUDA_VISIBLE_DEVICES=1 python croco_eval.py \
     --output_dir ./output/tapvid/davis/croco \
     --resize_h 224 --resize_w 224 \
-    --eval_dataset davis_first --tapvid_root /mnt/ssd4/PointTracking/tapvid_davis/tapvid_davis.pkl \
+    --eval_dataset davis_first --tapvid_root /root/data/tapvid_davis/tapvid_davis.pkl \
     --model crocov2 \
     --croco_ckpt ./zeroco/pretrained_models/CroCo_V2_ViTLarge_BaseDecoder.pth \
     --output_correlation ca_map \

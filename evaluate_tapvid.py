@@ -164,7 +164,7 @@ def main(args):
 
     batchfy = args.batch_size > 1
     # Set up the dataset and evaluator.
-    dataset = TAPVid(args, batchfy=batchfy)
+    dataset = TAPVid(args, batchfy=False)
     batch_size = args.batch_size if args.eval_dataset == 'kinetics_first' else 1
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=8, drop_last=False, pin_memory=True)
     evaluator = Evaluator(zero_shot=True)
@@ -214,9 +214,9 @@ def main(args):
     PARAMS['save_layer'] = save_layer
 
     for j, (video, gt_trajectory, visibility, query_points_i, video_ori) in enumerate(dataloader):
-        if args.model == 'hunyuan_t2v' and j <= 9: 
-            evaluator.cnt += 1
-            continue
+        # if args.model == 'hunyuan_t2v' and j <= 9: 
+        #     evaluator.cnt += 1
+        #     continue
 
         valid_mask = (query_points_i[:,:,0] == 0)
         if not torch.any(valid_mask):
@@ -235,10 +235,10 @@ def main(args):
 
         if args.vis_video:
             gt_trajectory_vis = gt_trajectory.clone()
-            gt_trajectory_vis[..., 0] *= (W / 256)
-            gt_trajectory_vis[..., 1] *= (H / 256)
+            gt_trajectory_vis[..., 0] *= (720 / 256)
+            gt_trajectory_vis[..., 1] *= (480 / 256)
             vis = Visualizer(save_dir=os.path.join(output_dir, 'gt'), pad_value=0, linewidth=3, show_first_frame=1, tracks_leave_trace=args.tracks_leave_trace)
-            frames = vis.visualize(video=video, tracks=gt_trajectory_vis, filename =f"{j:03d}.mp4", query_frame=0, visibility=visibility)
+            frames = vis.visualize(video=video_ori, tracks=gt_trajectory_vis, filename =f"{j:03d}.mp4", query_frame=0, visibility=visibility)
             
             gt_dir = os.path.join(output_dir, 'gt', f'{j:03d}')
             os.makedirs(gt_dir, exist_ok=True)
@@ -290,7 +290,7 @@ def main(args):
                 corr.append(correlation_from_t_to_s)
             correlation_per_chunk.append((chunk_indices, corr))
             chunk_start += stride
-            chunk_end = min(chunk_start + 11 * interval, T-1)
+            chunk_end = min(chunk_start + args.chunk_frame_num * interval, T-1)
             
         correlation = combine_correlations(correlation_per_chunk, average_overlap=args.average_chunk_overlap)
 
@@ -333,9 +333,12 @@ def main(args):
         trajectory[..., 0] *= scaling_factor_x
         trajectory[..., 1] *= scaling_factor_y
 
-        if args.vis_video:            
+        if args.vis_video:
+            vis_traj = trajectory.clone()
+            vis_traj[..., 0] *= (720 / W)
+            vis_traj[..., 1] *= (480 / H)
             vis = Visualizer(save_dir=os.path.join(output_dir, 'pred'), pad_value=0, linewidth=3, show_first_frame=1, tracks_leave_trace=args.tracks_leave_trace)
-            frames = vis.visualize(video=video_ori, tracks=trajectory, filename =f"{j:03d}.mp4", query_frame=0, visibility=visibility)
+            frames = vis.visualize(video=video_ori, tracks=vis_traj, filename =f"{j:03d}.mp4", query_frame=0, visibility=visibility)
             
             pred_dir = os.path.join(output_dir, 'pred', f'{j:03d}')
             os.makedirs(pred_dir, exist_ok=True)
@@ -369,6 +372,7 @@ if __name__ == "__main__":
     parser.add_argument('--resize_w', type=int, default=720)
 
     parser.add_argument('--stride', type=int, default=12)
+    parser.add_argument('--chunk_frame_num', type=int, default=12)
     parser.add_argument('--chunk_interval', type=bool, default=True)
     parser.add_argument('--average_chunk_overlap', type=bool, default=False)
     parser.add_argument("--video_max_len", type=int, default=-1)
@@ -388,7 +392,7 @@ if __name__ == "__main__":
 
     parser.add_argument('--start', type=int, default=0)
     parser.add_argument('--end', type=int, default=0)
-    parser.add_argument('--batch_size', type=int, default=4)
+    parser.add_argument('--batch_size', type=int, default=1)
 
     args = parser.parse_args()
 

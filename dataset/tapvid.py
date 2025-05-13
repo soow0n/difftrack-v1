@@ -130,7 +130,6 @@ class TAPVid(torch.utils.data.Dataset):
                     data = pickle.load(f)
                     points_dataset = points_dataset + data
             video_lengths = [len(data['video']) for data in points_dataset]
-            breakpoint()
             if batchfy:
                 self.points_dataset = [
                     points_dataset[i] 
@@ -184,7 +183,7 @@ class TAPVid(torch.utils.data.Dataset):
             frames = np.array([decode(frame) for frame in frames])
 
         frames_ori = None 
-        target_points = torch.tensor(self.points_dataset[video_name]["points"].copy(), dtype=torch.float32)
+        target_points = torch.tensor(self.points_dataset[video_name]["points"].copy())
         # target_points = self.points_dataset[video_name]["points"].copy()
 
         if self.resize_shape is not None:

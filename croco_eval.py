@@ -80,7 +80,6 @@ def main(args):
     network = network.to('cuda')
 
     for j, (video, gt_trajectory, visibility, query_points_i, video_ori) in enumerate(dataloader): 
-        if args.eval_dataset == 'davis_first' and j not in [5, 6, 17, 18, 21, 24, 27]: continue
 
         valid_mask = (query_points_i[:,:,0] == 0)
         if not torch.any(valid_mask):
@@ -234,8 +233,8 @@ if __name__ == "__main__":
     parser.add_argument('--tapvid_root', type=str)
     parser.add_argument('--eval_dataset', type=str, choices=["davis_first", "rgb_stacking_first", "kinetics_first"], default="davis_first")
 
-    parser.add_argument('--resize_h', type=int, default=480)
-    parser.add_argument('--resize_w', type=int, default=720)
+    parser.add_argument('--resize_h', type=int, default=224)
+    parser.add_argument('--resize_w', type=int, default=224)
 
     parser.add_argument('--start', type=int, default=0)
     parser.add_argument('--end', type=int, default=0)

@@ -496,7 +496,8 @@ class CroCoNet(nn.Module):
             camap1 = torch.stack(camap1, dim=1) 
             camap2 = torch.stack(camap2, dim=1)
             refined_layered_corr = (camap1 + camap2.transpose(-1,-2))/2. 
-            refined_corr = (camap1.mean(dim=1) + camap2.mean(dim=1).transpose(-1,-2))/2.    
+            refined_corr = (camap1.mean(dim=1) + camap2.mean(dim=1).transpose(-1,-2))/2.  
+            return refined_corr
 
         else:
             assert False, 'output_mode not defined'
