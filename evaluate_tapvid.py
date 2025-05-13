@@ -249,8 +249,9 @@ def main(args):
         h = H // stride_val
         w = W // stride_val
 
+        chunk_len = args.chunk_frame_num - 1
         interval = T // 12 if args.chunk_interval else 1
-        chunk_start, chunk_end = 1, (args.chunk_frame_num - 2) * interval + 1
+        chunk_start, chunk_end = 1, chunk_len * interval + 1
 
         query_frames, key_frames = None, None
         visited_idx = set([])
@@ -290,7 +291,7 @@ def main(args):
                 corr.append(correlation_from_t_to_s)
             correlation_per_chunk.append((chunk_indices, corr))
             chunk_start += stride
-            chunk_end = min(chunk_start + args.chunk_frame_num * interval, T-1)
+            chunk_end = min(chunk_start + chunk_len * interval, T-1)
             
         correlation = combine_correlations(correlation_per_chunk, average_overlap=args.average_chunk_overlap)
 
