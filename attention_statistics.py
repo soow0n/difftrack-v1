@@ -11,7 +11,7 @@ from utils.evaluation import PCKEvaluator
 from utils.query_key_vis import QueryKeyVisualizer, src_pos_img
 from utils.track_vis import Visualizer
 from utils.aggregate_results import pck_mean, affinity_mean
-
+from itertools import product
 
 import cv2
 from PIL import Image
@@ -56,9 +56,12 @@ def main(args):
         'matching_mode': args.matching_mode,
         'attn_weight': args.affinity_score,
         'query_key': args.vis_attn_map,
+        'feature': False,
         'video_mode': args.video_mode,
         'qk_device': args.qk_device,
-        'debug': False
+        'debug': False,
+        'save_layer': args.vis_layers,
+        'save_timestep': args.vis_timesteps
     }
     os.makedirs(output_dir, exist_ok=True)
 
@@ -109,14 +112,22 @@ def main(args):
 
         if args.pck:
             layer_num = 60 if args.model == 'hunyuan_t2v' else 30
-            pck_evaluator = PCKEvaluator(
+            qk_pck_evaluator = PCKEvaluator(
+                timestep_num=args.num_inference_steps,
+                layer_num=layer_num,
+                gt_tracks=gt_track,
+                gt_visibility=gt_visibility
+            )
+            feat_pck_evaluator = PCKEvaluator(
                 timestep_num=args.num_inference_steps,
                 layer_num=layer_num,
                 gt_tracks=gt_track,
                 gt_visibility=gt_visibility
             )
         else:
-            pck_evaluator = None
+            qk_pck_evaluator = None
+            feat_pck_evaluator = None
+
 
         if args.vis_attn_map:
             querykey_visualizer = QueryKeyVisualizer(
@@ -144,7 +155,7 @@ def main(args):
                     print("Failed to extract the first frame.")
                     continue
 
-                video, attn_query_keys, vis_trajectory = pipe(
+                video, attn_query_keys, features, vis_trajectory = pipe(
                     image=image,
                     prompt=prompt,
                     height=480,
@@ -154,7 +165,8 @@ def main(args):
                     return_dict=False,
                     generator=generator,
                     affinity_score=affinity_score,
-                    pck_evaluator=pck_evaluator,
+                    qk_pck_evaluator=qk_pck_evaluator,
+                    feat_pck_evaluator=feat_pck_evaluator,
                     querykey_visualizer=querykey_visualizer,
                     vis_timesteps=args.vis_timesteps,
                     vis_layers=args.vis_layers,
@@ -164,7 +176,7 @@ def main(args):
 
                 image.save(os.path.join(save_dir,f'first_frame.png'))
             else:
-                video, attn_query_keys, vis_trajectory = pipe(
+                video, attn_query_keys, features, vis_trajectory = pipe(
                     prompt=prompt,
                     height=480,
                     width=720,
@@ -173,7 +185,8 @@ def main(args):
                     return_dict=False,
                     generator=generator,
                     affinity_score=affinity_score,
-                    pck_evaluator=pck_evaluator,
+                    qk_pck_evaluator=qk_pck_evaluator,
+                    feat_pck_evaluator=feat_pck_evaluator,
                     querykey_visualizer=querykey_visualizer,
                     vis_timesteps=args.vis_timesteps,
                     vis_layers=args.vis_layers,
@@ -182,32 +195,56 @@ def main(args):
                 )
 
             if affinity_score is not None:
-                affinity_score.report(os.path.join(save_dir, f'affinity_{args.affinity_mode}.xlsx'))
-                print(f"Affinity score ({args.affinity_mode}) saved at {os.path.join(save_dir, f'affinity_{args.affinity_mode}.xlsx')}")
+                affinity_score.report(save_dir)
+                print(f"Affinity score ({args.affinity_mode}) saved at {save_dir}")
             
-            if pck_evaluator is not None:
-                pck_evaluator.report(os.path.join(save_dir, 'pck.txt'))
-                print(f"PCK saved at {os.path.join(save_dir, 'pck.txt')}")
+            if qk_pck_evaluator is not None:
+                qk_pck_evaluator.report(os.path.join(save_dir, 'qk_pck.txt'))
+                print(f"PCK saved at {os.path.join(save_dir, 'qk_pck.txt')}")
+            if feat_pck_evaluator is not None:
+                feat_pck_evaluator.report(os.path.join(save_dir, 'feat_pck.txt'))
+                print(f"PCK saved at {os.path.join(save_dir, 'feat_pck.txt')}")
             
 
             if querykey_visualizer is not None:
-                attention_dir = os.path.join(save_dir, 'attention_map')
-                os.makedirs(attention_dir, exist_ok=True)
+                for pos_h, pos_w in list(product(args.pos_h, args.pos_w)):
+                    attention_dir = os.path.join(save_dir, 'attention_map', f'({pos_h},{pos_w})')
+                    os.makedirs(attention_dir, exist_ok=True)
 
-                pos_img = src_pos_img(video[0][0], args.pos_y, args.pos_x)
-                pos_img.save(os.path.join(attention_dir, 'src_pos.png'))
+                    pos_img = src_pos_img(video[0][0], pos_h, pos_w)
+                    pos_img.save(os.path.join(attention_dir, 'src_pos.png'))
 
-                querykey_visualizer.save_i2i_attn_map(
-                    attn_query_keys=attn_query_keys,
-                    output_dir=attention_dir,
-                    pos=(args.pos_y, args.pos_x)
-                )
+                    qk_attns = querykey_visualizer.save_i2i_attn_map(
+                        attn_query_keys=attn_query_keys,
+                        output_dir=attention_dir,
+                        pos=(pos_h, pos_w),
+                        mode='qk'
+                    )
+                    feat_attns = querykey_visualizer.save_i2i_attn_map(
+                        attn_query_keys=features,
+                        output_dir=attention_dir,
+                        pos=(pos_h, pos_w),
+                        mode='feature'
+                    )
+                    qk_attn_dir = os.path.join(attention_dir, 'qk')
+                    feat_attn_dir = os.path.join(attention_dir, 'feature')
 
-                os.makedirs(os.path.join(save_dir, 'pca'), exist_ok=True)
-                querykey_visualizer.save_pcas(
-                    attn_query_keys=attn_query_keys, 
-                    output_dir=os.path.join(save_dir, 'pca')
-                )
+                    os.makedirs(qk_attn_dir, exist_ok=True)
+                    os.makedirs(feat_attn_dir, exist_ok=True)
+                    # breakpoint()
+                    for t, timestep in enumerate(args.vis_timesteps):
+                        for l, layer in enumerate(args.vis_layers):
+                            os.makedirs(os.path.join(qk_attn_dir, f't{timestep}_l{layer}'), exist_ok=True)
+                            os.makedirs(os.path.join(feat_attn_dir, f't{timestep}_l{layer}'), exist_ok=True)
+                            for f in range(13):
+                                Image.fromarray(qk_attns[t][l][f]).save(os.path.join(qk_attn_dir, f't{timestep}_l{layer}', f'{f}.png'))
+                                Image.fromarray(feat_attns[t][l][f]).save(os.path.join(feat_attn_dir, f't{timestep}_l{layer}', f'{f}.png'))
+
+                # os.makedirs(os.path.join(save_dir, 'pca'), exist_ok=True)
+                # querykey_visualizer.save_pcas(
+                #     attn_query_keys=attn_query_keys, 
+                #     output_dir=os.path.join(save_dir, 'pca')
+                # )
             
 
             if args.vis_track:
@@ -231,10 +268,13 @@ def main(args):
 
 
     if args.pck:
-        pck_mean(file_list=glob.glob(os.path.join(output_dir, '*/pck.txt')), output_path=os.path.join(output_dir, 'total_pck.csv'))
+        pck_mean(file_list=glob.glob(os.path.join(output_dir, '*/qk_pck.txt')), output_path=os.path.join(output_dir, 'total_qk_pck.csv'))
+        pck_mean(file_list=glob.glob(os.path.join(output_dir, '*/feat_pck.txt')), output_path=os.path.join(output_dir, 'total_feat_pck.csv'))
+
 
     if args.affinity_score:
-        affinity_mean(file_list=glob.glob(os.path.join(output_dir, f'*/affinity_{args.affinity_mode}.xlsx')), output_path=os.path.join(output_dir, f'total_affinity_{args.affinity_mode}.xlsx'))
+        affinity_mean(file_list=glob.glob(os.path.join(output_dir, f'*/affinity_max.xlsx')), output_path=os.path.join(output_dir, f'total_affinity_max.xlsx'))
+        affinity_mean(file_list=glob.glob(os.path.join(output_dir, f'*/affinity_sum.xlsx')), output_path=os.path.join(output_dir, f'total_affinity_sum.xlsx'))
 
 
 
@@ -250,8 +290,8 @@ if __name__=="__main__":
     parser.add_argument("--matching_mode", type=str, default='qk')
 
     parser.add_argument("--vis_attn_map", action='store_true')
-    parser.add_argument("--pos_y", type=int, default=16)
-    parser.add_argument("--pos_x", type=int, default=16)
+    parser.add_argument("--pos_h", type=int, nargs='+', default=[16])
+    parser.add_argument("--pos_w", type=int, nargs='+', default=[16])
 
     parser.add_argument("--vis_track", action='store_true')
     parser.add_argument("--vis_timesteps", nargs='+', type=int, default=[49])

@@ -101,10 +101,14 @@ class QueryKeyVisualizer:
         self.timesteps = timesteps
 
 
-    def _get_i2i_attn_map(self, queries, keys, pos, latent_idx):
+    def _get_i2i_attn_map(self, queries, keys, pos, latent_idx, mode='qk'):
+        if mode == 'feature':
+            queries = queries.unsqueeze(0)
+            keys = keys.unsqueeze(0)
+
         q_start = self.text_len
         k_start = self.text_len + latent_idx * self.H * self.W
-        if self.model == "hunyuan_t2v":
+        if self.model == "hunyuan_t2v" or mode == 'feature':
             q_start -= self.text_len
             k_start -= self.text_len
         q_end = q_start + self.H * self.W
@@ -212,25 +216,28 @@ class QueryKeyVisualizer:
         attn_query_keys,
         output_dir,
         pos,
+        mode='qk'
     ):
+        attnmaps_total = []
         for l, layer in enumerate(self.layers):
             attn_map_per_layer = []
             log_timesteps = []
             for t, t_idx in enumerate(self.timestep_idxs):
-                queries, keys = attn_query_keys[t]
+                if mode == 'feature':
+                    queries = keys = attn_query_keys[t]
+                else:
+                    queries, keys = attn_query_keys[t]
+
                 attn_map_per_timestep = [
-                    self._get_i2i_attn_map(queries[l], keys[l], pos, latent_idx)
+                    self._get_i2i_attn_map(queries[l], keys[l], pos, latent_idx, mode=mode)
                     for latent_idx in range(self.latent_num)
                 ]
                 attn_map_per_layer.append(attn_map_per_timestep)
                 log_timesteps.append(f"timestep{t_idx}({self.timesteps[t_idx]})")
+            attnmaps_total.append(attn_map_per_layer)
+        return attnmaps_total
+    
         
-            vis_canvas(
-                attn_map_per_layer,
-                log_timesteps=log_timesteps,
-                title=f"Query/Key Attention : Layer {layer}",
-                output_path=os.path.join(output_dir, f'layer{layer}.png')
-            )
 
     
     def save_pcas(

@@ -140,6 +140,18 @@ def retrieve_timesteps(
     return timesteps, num_inference_steps
 
 
+def retrieve_latents(
+    encoder_output: torch.Tensor, generator: Optional[torch.Generator] = None, sample_mode: str = "sample"
+):
+    if hasattr(encoder_output, "latent_dist") and sample_mode == "sample":
+        return encoder_output.latent_dist.sample(generator)
+    elif hasattr(encoder_output, "latent_dist") and sample_mode == "argmax":
+        return encoder_output.latent_dist.mode()
+    elif hasattr(encoder_output, "latents"):
+        return encoder_output.latents
+    else:
+        raise AttributeError("Could not access latents of provided encoder_output")
+
 class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
     r"""
     Pipeline for text-to-video generation using CogVideoX.
@@ -346,6 +358,66 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
         # scale the initial noise by the standard deviation required by the scheduler
         latents = latents * self.scheduler.init_noise_sigma
         return latents
+    
+    def prepare_video_latents(
+        self, 
+        batch_size, 
+        num_channels_latents, 
+        num_frames, 
+        height, 
+        width, 
+        dtype, 
+        device, 
+        generator, 
+        video: list = None, 
+        frame_as_latent: bool = False,
+        latents: torch.Tensor = None, 
+        timestep: int = None,
+        add_noise: bool = False,
+    ):
+        if isinstance(generator, list) and len(generator) != batch_size:
+            raise ValueError(
+                f"You have passed a list of generators of length {len(generator)}, but requested an effective batch"
+                f" size of {batch_size}. Make sure the batch size matches the length of the generators."
+            )
+    
+        if latents is None:
+            assert video is not None
+            
+            if frame_as_latent:
+                num_frames = video.size(2)
+                video = video.squeeze(0).unsqueeze(2)
+                if isinstance(generator, list):
+                    init_latents = [retrieve_latents(self.vae.encode(video[:, i].unsqueeze(0)), generator[i]) for i in range(num_frames)]
+                else:
+                    init_latents = [retrieve_latents(self.vae.encode(video[:, i].unsqueeze(0)), generator) for i in range(num_frames)]
+                init_latents = torch.cat(init_latents, dim=0).to(dtype).permute(2, 0, 1, 3, 4)  # [B, F, C, H, W]
+            else:
+                num_frames = (video.size(2) - 1) // self.vae_scale_factor_temporal + 1 if latents is None else latents.size(1)
+                if isinstance(generator, list):
+                    init_latents = [
+                        retrieve_latents(self.vae.encode(video[i].unsqueeze(0)), generator[i]) for i in range(batch_size)
+                    ]
+                else:
+                    init_latents = [retrieve_latents(self.vae.encode(vid.unsqueeze(0)), generator) for vid in video]
+                init_latents = torch.cat(init_latents, dim=0).to(dtype).permute(0, 2, 1, 3, 4)  # [B, F, C, H, W]
+        
+            latents = self.vae_scaling_factor_image * init_latents
+            if add_noise and timestep is not None:
+                shape = (
+                    batch_size,
+                    num_frames,
+                    num_channels_latents,
+                    height // self.vae_scale_factor_spatial,
+                    width // self.vae_scale_factor_spatial,
+                )
+                noise = randn_tensor(shape, generator=generator, device=device, dtype=dtype)
+                latents = self.scheduler.add_noise(latents, noise, timestep)
+            latents = latents * self.scheduler.init_noise_sigma
+        
+        latents = latents.to(device)
+        return latents
+    
 
     def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
         latents = latents.permute(0, 2, 1, 3, 4)  # [batch_size, num_channels, num_frames, height, width]
@@ -531,7 +603,9 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
         querykey_visualizer=None,
         vis_timesteps=None,
         vis_layers=None,
-        params=None
+        params=None,
+        video=None,
+        inverse_step=0,
     ) -> Union[CogVideoXPipelineOutput, Tuple]:
         """
         Function invoked when calling the pipeline for generation.
@@ -680,17 +754,37 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
             num_frames += additional_frames * self.vae_scale_factor_temporal
 
         latent_channels = self.transformer.config.in_channels
-        latents = self.prepare_latents(
-            batch_size * num_videos_per_prompt,
-            latent_channels,
-            num_frames,
-            height,
-            width,
-            prompt_embeds.dtype,
-            device,
-            generator,
-            latents,
-        )
+        if video is not None:
+            video = self.video_processor.preprocess_video(video, height=height, width=width)
+            video = video.to(device=device, dtype=prompt_embeds.dtype)
+
+            latents = self.prepare_video_latents(
+                batch_size * num_videos_per_prompt,
+                latent_channels,
+                num_frames,
+                height,
+                width,
+                prompt_embeds.dtype,
+                device,
+                generator,
+                latents=None,
+                video=video,
+                frame_as_latent=False,
+                timestep=timesteps[inverse_step],
+                add_noise=True,
+            )
+        else:
+            latents = self.prepare_latents(
+                batch_size * num_videos_per_prompt,
+                latent_channels,
+                num_frames,
+                height,
+                width,
+                prompt_embeds.dtype,
+                device,
+                generator,
+                latents,
+            )
 
         # 6. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
@@ -719,6 +813,9 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
             old_pred_original_sample = None
             for i, t in enumerate(timesteps):
                 if self.interrupt:
+                    continue
+
+                if video is not None and i != inverse_step:
                     continue
 
                 latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
@@ -760,6 +857,7 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
                         xy = get_points_on_a_grid(grid_size, (H, W), device=query.device) # torch.Size([1, grid*grid, 2]) 첫번째 RGB 프레임에 grid 찍기
                         
                         queried_coords = xy / stride # 원본 dimension -> latent dimension에 맞추기 
+                        
                         
                         query_frames = rearrange(query[:, :, text_seq_length:][1][None,...], 'b head (f h w) c -> b head f (h w) c', f=f_num, h=h, w=w)
                         key_frames = rearrange(key[:, :, text_seq_length:][1][None,...], 'b head (f h w) c -> b head f (h w) c', f=f_num, h=h, w=w)
@@ -860,14 +958,14 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
                     if params['trajectory']:
                         trajectory = blk.attn1.processor.trajectory_qk
                         if qk_pck_evaluator is not None:
-                            qk_pck_evaluator.update(pred_tracks=trajectory, layer=l, timestep_idx=i)
+                            qk_pck_evaluator.update(pred_tracks=trajectory.cpu(), layer=l, timestep_idx=i)
 
                         if vis_timesteps[0] == i and vis_layers[0] == l:
                             vis_trajectory = trajectory
 
                         trajectory = blk.attn1.processor.trajectory_feat
                         if feat_pck_evaluator is not None:
-                            feat_pck_evaluator.update(pred_tracks=trajectory, layer=l, timestep_idx=i)
+                            feat_pck_evaluator.update(pred_tracks=trajectory.cpu(), layer=l, timestep_idx=i)
                         
                         del blk.attn1.processor.trajectory_qk
                         del blk.attn1.processor.trajectory_feat
@@ -875,18 +973,25 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
                         del blk.attn1.processor.query
                         del blk.attn1.processor.key
 
-                if params['query_key'] and querykey_visualizer is not None:
+    
+                attn_query_keys = []
+                features = []
+                if querykey_visualizer is not None:
                     if i in vis_timesteps:
-                        queries_, keys_ = [], []
+                        queries_, keys_, feats_ = [], [], []
                         for l in vis_layers:
                             blk = self.transformer.transformer_blocks[l]
                             Q = blk.attn1.processor.query[1]
                             K = blk.attn1.processor.key[1]
+                            feat = blk.attn1.processor.feature[1]
                             queries_.append(Q)
                             keys_.append(K)
+                            feats_.append(feat)
                             del blk.attn1.processor.query
                             del blk.attn1.processor.key
+                            del blk.attn1.processor.feature
                         attn_query_keys.append([queries_, keys_])
+                        features.append(feats_)
                             
                 if use_dynamic_cfg:
                     self._guidance_scale = 1 + guidance_scale * (
@@ -942,6 +1047,6 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
         self.maybe_free_model_hooks()
 
         if not return_dict:
-            return (video, attn_query_keys, vis_trajectory)
+            return (video, attn_query_keys, features, vis_trajectory)
 
         return CogVideoXPipelineOutput(frames=video)

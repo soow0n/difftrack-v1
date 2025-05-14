@@ -2887,15 +2887,15 @@ class CogVideoXAttnProcessor2_0:
         stride = 16
         h = H // stride
         w = W // stride
-        if args['trajectory']:
-            
+        if args['trajectory']:            
             f_num = query[:, :, text_seq_length:].shape[2] // (h*w)  # 17550 // (30*45) => 13
 
-            grid_size = 20 if args['video_mode'] == 'fg' else 10
-
-            xy = get_points_on_a_grid(grid_size, (H, W), device=query.device) # torch.Size([1, grid*grid, 2]) 첫번째 RGB 프레임에 grid 찍기
-            
-            queried_coords = xy / stride # 원본 dimension -> latent dimension에 맞추기 
+            if args['query_coords'] is None:
+                grid_size = 20 if args['video_mode'] == 'fg' else 10
+                xy = get_points_on_a_grid(grid_size, (H, W), device=query.device) # torch.Size([1, grid*grid, 2]) 첫번째 RGB 프레임에 grid 찍기
+                queried_coords = xy / stride # 원본 dimension -> latent dimension에 맞추기 
+            else:
+                queried_coords = args['query_coords'].to(query.device)
             
             query_frames = rearrange(query[1:, :, text_seq_length:], 'b head (f h w) c -> b head f (h w) c', f=f_num, h=h, w=w)
             key_frames = rearrange(key[1:, :, text_seq_length:], 'b head (f h w) c -> b head f (h w) c', f=f_num, h=h, w=w)
@@ -2928,11 +2928,10 @@ class CogVideoXAttnProcessor2_0:
                 sampled_queried_coords[:, :, 0] = (sampled_queried_coords[:, :, 0] / (w - margin)) * 2 -1.0
                 sampled_queried_coords[:, :, 1] = (sampled_queried_coords[:, :, 1] / (h - margin)) * 2 -1.0
                 
-                track = F.grid_sample(
-                    mapping_set.to(query.device), 
-                    sampled_queried_coords.view(1, grid_size, grid_size, 2).to(query.device), 
-                    align_corners=True
-                )
+                B, N = sampled_queried_coords.shape[0], sampled_queried_coords.shape[1]
+                grid = sampled_queried_coords.view(B, N, 1, 2).to(query.device)
+                
+                track = F.grid_sample(mapping_set.to(query.device), grid=grid, align_corners=True)
                 track = rearrange(track, "b c h w -> b () (h w) c") # torch.Size([1, 1, 25, 2])
                 tracks_qk.append(track)
 
@@ -2965,13 +2964,12 @@ class CogVideoXAttnProcessor2_0:
                 sampled_queried_coords[:, :, 0] = (sampled_queried_coords[:, :, 0] / (w - margin)) * 2 -1.0
                 sampled_queried_coords[:, :, 1] = (sampled_queried_coords[:, :, 1] / (h - margin)) * 2 -1.0
                 
-                track = F.grid_sample(
-                    mapping_set.to(query.device), 
-                    sampled_queried_coords.view(1, grid_size, grid_size, 2).to(query.device), 
-                    align_corners=True
-                )
+                B, N = sampled_queried_coords.shape[0], sampled_queried_coords.shape[1]
+                grid = sampled_queried_coords.view(B, N, 1, 2).to(query.device)
+                
+                track = F.grid_sample(mapping_set.to(query.device), grid=grid, align_corners=True)
                 track = rearrange(track, "b c h w -> b () (h w) c") # torch.Size([1, 1, 25, 2])
-                tracks_feat.append(track)
+                tracks_qk.append(track)
 
             trajectory_feat = torch.cat(tracks_feat, dim=1)
             trajectory_feat = interpolate_trajectory(trajectory_feat, target_frames=49, mode="linear")
@@ -2985,14 +2983,17 @@ class CogVideoXAttnProcessor2_0:
             self.trajectory_feat = trajectory_feat
                 
         if args['attn_weight']:
-            grid_size = 20 if args['video_mode'] == 'fg' else 10
-
-            xy = get_points_on_a_grid(grid_size, (H, W), device=query.device) # torch.Size([1, grid*grid, 2]) 첫번째 RGB 프레임에 grid 찍기
-
+            if args['query_coords'] is None:
+                grid_size = 20 if args['video_mode'] == 'fg' else 10
+                xy = get_points_on_a_grid(grid_size, (H, W), device=query.device) # torch.Size([1, grid*grid, 2]) 첫번째 RGB 프레임에 grid 찍기
+                queried_coords = xy / stride # 원본 dimension -> latent dimension에 맞추기 
+            else:
+                queried_coords = args['query_coords'].to(query.device)
+            queried_coords = torch.round(queried_coords).to(torch.int)
+            
             d_k = query.shape[-1]  # 64
             first_query = query[:, :, text_seq_length: text_seq_length + h * w, :][1]
-
-            queried_coords = torch.round(xy/stride).to(torch.int)
+            
             x_pos, y_pos = queried_coords[0,:,0], queried_coords[0,:,1]
             x_pos = torch.clip(x_pos, 0, h-1)
             y_pos = torch.clip(y_pos, 0, w-1)
@@ -3016,6 +3017,10 @@ class CogVideoXAttnProcessor2_0:
         encoder_hidden_states, hidden_states = hidden_states.split(
             [text_seq_length, hidden_states.size(1) - text_seq_length], dim=1
         )
+
+        if args['feature']:
+            self.feature = hidden_states
+
         return hidden_states, encoder_hidden_states
 
 
