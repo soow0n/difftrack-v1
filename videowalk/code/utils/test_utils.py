@@ -178,25 +178,29 @@ def batched_affinity(query, keys, mask, temperature, topk, long_mem, device):
     bsize = 2
     Ws, Is = [], []
     for b in range(0, keys.shape[2], bsize):
-        _k, _q = keys[:, :, b:b+bsize].to(device), query[:, :, b:b+bsize].to(device)
+        if b+bsize >= keys.shape[2]:
+            _k = keys[:, :, b:].to(device)
+            _q = query.repeat(1, 1, _k.shape[2], 1).to(device)
+        else:
+            _k, _q = keys[:, :, b:b+bsize].to(device), query.repeat(1, 1, bsize, 1).to(device)
         w_s, i_s = [], []
 
-        A = torch.einsum('ijklmn,ijkop->iklmnop', _k, _q) / temperature
-        
-        # Mask
-        A[0, :, len(long_mem):] += mask.to(device)
+        B, C, _, hw = _k.shape
+        _q = _q.permute(0, 2, 3, 1)
+        _k = _k.permute(0, 2, 3, 1)
 
-        _, N, T, h1w1, hw = A.shape
-        A = A.view(N, T*h1w1, hw)
+        A = _q @ _k.transpose(-2, -1)
+    
+        # Mask
+        A += mask.to(device)
         A /= temperature
 
-        weights, ids = torch.topk(A, topk, dim=-2)
-        weights = F.softmax(weights, dim=-2)
+        weights, ids = torch.topk(A.squeeze(0), topk, dim=-1)
+        weights = F.softmax(weights, dim=-1)
             
         Ws += [w for w in weights]
         Is += [ii for ii in ids]
 
-    
     return Ws, Is
 
 def infer_downscale(model):    
