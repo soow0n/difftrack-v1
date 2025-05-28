@@ -30,6 +30,8 @@ else:
     _import_structure["pipeline_cogvideox_video2video"] = ["CogVideoXVideoToVideoPipeline"]
     _import_structure["pipeline_cogvideox_inversion"] = ["CogVideoXInversePipeline"]
     _import_structure["pipeline_cogvideox_tracking"] = ["CogVideoXTrackPipeline"]
+    _import_structure["pipeline_cogvideox_image2video_tracking"] = ["CogVideoXImageToVideoTrackPipeline"]
+
 
 if TYPE_CHECKING or DIFFUSERS_SLOW_IMPORT:
     try:
@@ -47,6 +49,7 @@ if TYPE_CHECKING or DIFFUSERS_SLOW_IMPORT:
         from .pipeline_cogvideox_inversion import CogVideoXInversePipeline
         from .pipeline_cogvideox_tracking import CogVideoXTrackPipeline
         from .pipeline_cogvideox_image2video_2b_tracking import CogVideoXImageToVideoTrackPipeline2B
+        from .pipeline_cogvideox_image2video_tracking import CogVideoXImageToVideoTrackPipeline
 
 else:
     import sys

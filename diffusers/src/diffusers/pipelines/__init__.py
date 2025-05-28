@@ -156,6 +156,7 @@ else:
         "CogVideoXImageToVideoTrackPipeline2B",
         "CogVideoXInversePipeline",
         "CogVideoXTrackPipeline",
+        "CogVideoXImageToVideoTrackPipeline",
     ]
     _import_structure["cogview3"] = ["CogView3PlusPipeline"]
     _import_structure["cogview4"] = ["CogView4Pipeline", "CogView4ControlPipeline"]
@@ -517,7 +518,8 @@ if TYPE_CHECKING or DIFFUSERS_SLOW_IMPORT:
             CogVideoXImageToVideoPipeline2B,
             CogVideoXInversePipeline,
             CogVideoXTrackPipeline,
-            CogVideoXImageToVideoTrackPipeline2B
+            CogVideoXImageToVideoTrackPipeline2B,
+            CogVideoXImageToVideoTrackPipeline
         )
         from .cogview3 import CogView3PlusPipeline
         from .cogview4 import CogView4ControlPipeline, CogView4Pipeline
