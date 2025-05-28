@@ -60,6 +60,7 @@ class PAGMixin:
             layer_id = layer_id.split(".")[-1]
             name = name.split(".")[-1]
             return layer_id.isnumeric() and name.isnumeric() and layer_id == name
+        
 
         for layer_id in pag_applied_layers:
             # for each PAG layer input, we find corresponding self-attention layers in the unet model
@@ -71,19 +72,23 @@ class PAGMixin:
                 #   (2) Whether the module name matches pag layer id even partially
                 #   (3) Make sure it's not a fake integral match if the layer_id ends with a number
                 #       For example, blocks.1, blocks.10 should be differentiable if layer_id="blocks.1"
-                if (
-                    is_self_attn(module)
-                    and re.search(layer_id, name) is not None
-                    and not is_fake_integral_match(layer_id, name)
-                ):
-                    logger.debug(f"Applying PAG to layer: {name}")
-                    target_modules.append(module)
+                # if (
+                #     is_self_attn(module)
+                #     and re.search(layer_id, name) is not None
+                #     and not is_fake_integral_match(layer_id, name)
+                # ):  
+                if (re.search(layer_id, name) is not None): # and not is_fake_integral_match(layer_id, name)):
+                    if hasattr(module, "attn1"):
+                        if is_self_attn(module.attn1):
+                            target_modules.append(module)
+                            logger.debug(f"Applying PAG to layer: {name}")
 
             if len(target_modules) == 0:
                 raise ValueError(f"Cannot find PAG layer to set attention processor for: {layer_id}")
-
+            
             for module in target_modules:
-                module.processor = pag_attn_proc
+                # module.processor = pag_attn_proc
+                module.attn1.processor = pag_attn_proc
 
     def _get_pag_scale(self, t):
         r"""
@@ -116,6 +121,7 @@ class PAGMixin:
             perturbed attention guidance and the text noise prediction.
         """
         pag_scale = self._get_pag_scale(t)
+
         if do_classifier_free_guidance:
             noise_pred_uncond, noise_pred_text, noise_pred_perturb = noise_pred.chunk(3)
             noise_pred = (
