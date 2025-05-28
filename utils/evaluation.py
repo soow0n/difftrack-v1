@@ -200,14 +200,6 @@ class PCKEvaluator():
         masked_dist = self.gt_visibility.unsqueeze(-1) * square_dist
         euclidean_dist = torch.sqrt(torch.sum(masked_dist, dim=-1))
 
-        # pck_thres = []
-        # for thres in [1, 2, 4, 8, 16]:
-        #     within_dist = (euclidean_dist < thres) * self.gt_visibility
-        #     pck = (within_dist.sum() / self.gt_visibility.sum()) * 100
-        #     pck_thres.append(pck)
-        
-        # pck_mean = sum(pck_thres) / 5
-
         thres = 8
         within_dist = (euclidean_dist < thres) * self.gt_visibility
         pck = (within_dist.sum() / self.gt_visibility.sum()) * 100

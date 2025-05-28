@@ -82,10 +82,3 @@ def affinity_mean(file_list, output_path):
     styled.to_excel(output_path, index=False, header=False)
 
     print(f"Averaged affinity score saved to: {output_path}")
-
-
-if __name__=="__main__":
-    import glob
-    import os
-    output_dir = '/home/cvlab16/projects/soowon/diff-track/iccv2025/code-refactor/head_pck'
-    pck_mean(file_list=glob.glob(os.path.join(output_dir, '*/pck.txt')), output_path=os.path.join(output_dir, 'total_pck.csv'))
