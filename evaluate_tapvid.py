@@ -2,7 +2,7 @@
 
 
 import torch
-from diffusers import CogVideoXTrackPipeline, CogVideoXImageToVideoTrackPipeline2B, CogVideoXInversePipeline, HunyuanVideoTransformer3DModel, HunyuanVideoTrackPipeline
+from diffusers import CogVideoXTrackPipeline, CogVideoXImageToVideoTrackPipeline, CogVideoXImageToVideoTrackPipeline2B, CogVideoXInversePipeline, HunyuanVideoTransformer3DModel, HunyuanVideoTrackPipeline
 from diffusers.schedulers import CogVideoXDDIMScheduler
 import os
 import random
@@ -16,14 +16,28 @@ from utils.evaluation import Evaluator, compute_tapvid_metrics
 from dataset.tapvid import TAPVid
 from torchvision.transforms import ToPILImage
 import math
-import time
-from PIL import Image
 
 PARAMS = {
     'trajectory': False,
     'attn_weight': False,
     'query_key': True,
-    'qk_device': '',
+    'head_matching_layer': -1
+}
+
+INFERENCE_STEP = {
+    'cogvideox_t2v_5b': 50,
+    'cogvideox_i2v_5b': 50,
+    'cogvideox_t2v_2b': 50,
+    'cogvideox_i2v_2b': 50,
+    'hunyuan_t2v': 30
+}
+
+TOTAL_LAYER_NUM = {
+    'cogvideox_t2v_5b': 30,
+    'cogvideox_i2v_5b': 30,
+    'cogvideox_t2v_2b': 30,
+    'cogvideox_i2v_2b': 30,
+    'hunyuan_t2v': 60
 }
 
 
@@ -32,8 +46,8 @@ def process_chunk(
     generator,
     pipe,
     first_frame,
-    save_timestep,
-    save_layer,
+    matching_timestep,
+    matching_layer,
     inverse_step,
     add_noise=False,
     inversion_pipe=None,
@@ -42,11 +56,6 @@ def process_chunk(
 
     chunk_video = torch.cat([first_frame, chunk_video], dim=1) / 255.
     _, _, _, H, W = first_frame.shape 
-
-    if "hunyuan" in model_name:
-        num_inference_steps = 30
-    else:
-        num_inference_steps = 50
 
     # Run the inversion and generation pipelines.
     with torch.no_grad():
@@ -58,7 +67,7 @@ def process_chunk(
                 prompt="",
                 video=chunk_video,
                 num_videos_per_prompt=1,
-                num_inference_steps=num_inference_steps,
+                num_inference_steps=INFERENCE_STEP[model_name],
                 inverse_step=inverse_step,
                 use_dynamic_cfg=True,
                 guidance_scale=6,
@@ -74,14 +83,14 @@ def process_chunk(
                 width=W,
                 prompt="",
                 guidance_scale=6,
-                num_inference_steps=num_inference_steps,
+                num_inference_steps=INFERENCE_STEP[model_name],
                 generator=generator,
                 latents=latents,
                 video=chunk_video,
                 frame_as_latent=True,
                 inverse_step=inverse_step,
-                save_timestep=save_timestep,
-                save_layer=save_layer,
+                matching_timestep=matching_timestep,
+                matching_layer=matching_layer,
                 add_noise=add_noise,
                 return_dict=False,
                 params=PARAMS
@@ -92,22 +101,22 @@ def process_chunk(
                 width=W,
                 prompt="",
                 guidance_scale=6,
-                num_inference_steps=num_inference_steps,
+                num_inference_steps=INFERENCE_STEP[model_name],
                 generator=generator,
                 latents=latents,
                 video=chunk_video,
                 frame_as_latent=True,
                 inverse_step=inverse_step,
-                save_timestep=save_timestep,
-                save_layer=save_layer,
+                matching_timestep=matching_timestep,
+                matching_layer=matching_layer,
                 add_noise=add_noise,
                 return_dict=False,
                 params=PARAMS
             )
 
-    stride = 16
-    h = H // stride
-    w = W // stride
+    latent_scaling_size = 16
+    h = H // latent_scaling_size
+    w = W // latent_scaling_size
 
     f_num = queries[0][:, text_seq_length:].shape[1] // (h*w)  # 17550 // (30*45) => 13
     
@@ -135,22 +144,43 @@ def combine_correlations(correlations, average_overlap=False):
     return combined_corr
 
 
+def load_pipe(model, device):
+    if model == "cogvideox_t2v_5b":
+        # Load the pipelines.
+        pipe = CogVideoXTrackPipeline.from_pretrained("THUDM/CogVideoX-5b", torch_dtype=torch.bfloat16)
+        pipe.scheduler = CogVideoXDDIMScheduler.from_config(pipe.scheduler.config, timestep_spacing="trailing")
+        pipe.to(device=device, dtype=torch.bfloat16)
+    elif model == "cogvideox_t2v_2b":
+        # Load the pipelines.
+        pipe = CogVideoXTrackPipeline.from_pretrained("THUDM/CogVideoX-2b", torch_dtype=torch.bfloat16)
+        pipe.scheduler = CogVideoXDDIMScheduler.from_config(pipe.scheduler.config, timestep_spacing="trailing")
+        pipe.to(device=device, dtype=torch.bfloat16)
+    elif model == "cogvideox_i2v_5b":
+        # Load the pipelines.
+        pipe = CogVideoXImageToVideoTrackPipeline.from_pretrained("THUDM/CogVideoX-5b-I2V", torch_dtype=torch.bfloat16)
+        pipe.scheduler = CogVideoXDDIMScheduler.from_config(pipe.scheduler.config, timestep_spacing="trailing")
+        pipe.to(device=device, dtype=torch.bfloat16)
+    elif model == "cogvideox_i2v_2b":
+        pipe = CogVideoXImageToVideoTrackPipeline2B.from_pretrained(
+            "NimVideo/cogvideox-2b-img2vid",
+            torch_dtype=torch.bfloat16
+        ).to(device=device)
+        pipe.scheduler = CogVideoXDDIMScheduler.from_config(pipe.scheduler.config, timestep_spacing="trailing")
+    elif model == "hunyuan_t2v":
+        do_inversion = False
+        model_id = "hunyuanvideo-community/HunyuanVideo"
+        transformer = HunyuanVideoTransformer3DModel.from_pretrained(
+            model_id, subfolder="transformer", torch_dtype=torch.bfloat16
+        )
+        pipe = HunyuanVideoTrackPipeline.from_pretrained(
+            model_id, transformer=transformer, 
+            torch_dtype=torch.bfloat16
+        ).to(device=device)
+
+    return pipe
+
+
 def main(args):
-    from torchvision.transforms import ToPILImage
-    to_pil = ToPILImage()
-
-    if args.chunk_interval:
-        stride = 1
-    else:
-        stride = args.stride
-
-    inverse_step = args.inverse_step if args.inverse_step in range(50) else min(args.save_timestep)
-    output_dir = os.path.join(args.output_dir, f'{args.eval_dataset}_layer{args.save_layer}_inverse{inverse_step}_timestep{args.save_timestep}_stride{stride}_interval{args.chunk_interval}_overlap{args.average_chunk_overlap}_inversion{args.do_inversion}_noise{args.add_noise}')
-    os.makedirs(output_dir, exist_ok=True)
-    os.makedirs(os.path.join(output_dir, 'gt'), exist_ok=True)
-    os.makedirs(os.path.join(output_dir, 'pred'), exist_ok=True)
-
-
     # Fix seeds for reproducibility
     seed = 42
     torch.manual_seed(seed)
@@ -162,39 +192,29 @@ def main(args):
     torch.backends.cudnn.benchmark = False
     generator = torch.manual_seed(seed)
 
-    batchfy = args.batch_size > 1
+    to_pil = ToPILImage()
+
+    chunk_stride = args.chunk_stride if not args.chunk_frame_interval else 1
+    inverse_step = args.inverse_step if args.inverse_step in range(INFERENCE_STEP[args.model]) else min(args.matching_timestep)
+    
+    assert inverse_step < INFERENCE_STEP[args.model], f"Inverse step should be smaller than inference step {INFERENCE_STEP[args.model]} for {args.model}"
+
+    output_dir = args.output_dir
+    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(os.path.join(output_dir, 'gt'), exist_ok=True)
+    os.makedirs(os.path.join(output_dir, 'pred'), exist_ok=True)
+
     # Set up the dataset and evaluator.
-    dataset = TAPVid(args, batchfy=False)
-    batch_size = args.batch_size if args.eval_dataset == 'kinetics_first' else 1
-    dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=8, drop_last=False, pin_memory=True)
+    dataset = TAPVid(args)
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False, num_workers=4, drop_last=False, pin_memory=True)
     evaluator = Evaluator(zero_shot=True)
     queried_first = "first" in args.eval_dataset
-
-    if args.model == "cogvideox_t2v":
-        # Load the pipelines.
-        pipe = CogVideoXTrackPipeline.from_pretrained("THUDM/CogVideoX-2b", torch_dtype=torch.bfloat16)
-        pipe.scheduler = CogVideoXDDIMScheduler.from_config(pipe.scheduler.config, timestep_spacing="trailing")
-        pipe.to(device=args.pipe_device, dtype=torch.bfloat16)
-    elif args.model == "cogvideox_i2v":
-        pipe = CogVideoXImageToVideoTrackPipeline2B.from_pretrained(
-            "NimVideo/cogvideox-2b-img2vid",
-            torch_dtype=torch.bfloat16
-        ).to(device=args.pipe_device)
-        pipe.scheduler = CogVideoXDDIMScheduler.from_config(pipe.scheduler.config, timestep_spacing="trailing")
-    elif args.model == "hunyuan_t2v":
-        args.do_inversion = False
-        model_id = "hunyuanvideo-community/HunyuanVideo"
-        transformer = HunyuanVideoTransformer3DModel.from_pretrained(
-            model_id, subfolder="transformer", torch_dtype=torch.bfloat16
-        )
-        pipe = HunyuanVideoTrackPipeline.from_pretrained(
-            model_id, transformer=transformer, 
-            torch_dtype=torch.bfloat16
-        ).to(device=args.pipe_device)
     
+    pipe = load_pipe(args.model, args.pipe_device)
     pipe.vae.enable_slicing()
     pipe.vae.enable_tiling()
 
+    assert not (args.do_inversion and args.add_noise), "Cannot inverse noise and add random noise at same time"
     inversion_pipe = None
     if args.do_inversion and "cogvideox" in args.model:
         inversion_pipe = CogVideoXInversePipeline.from_pretrained("THUDM/CogVideoX-2b", torch_dtype=torch.bfloat16)
@@ -202,22 +222,16 @@ def main(args):
         inversion_pipe.to(device=args.inv_pipe_device, dtype=torch.bfloat16)
         inversion_pipe.vae.enable_slicing()
         inversion_pipe.vae.enable_tiling()
-    elif "hunyuan" in args.model:
-        # TODO: hunyuan inversion pipeline
-        pass
-
-    PARAMS['qk_device'] = args.qk_device
     
-    save_timestep = args.save_timestep
-    save_layer = args.save_layer
+    matching_timestep = args.matching_timestep
+    matching_layer = args.matching_layer
 
-    PARAMS['save_layer'] = save_layer
+    assert min(matching_timestep) >= inverse_step, "Matching timestep should be bigger than inverse step"
+    assert max(matching_layer) < TOTAL_LAYER_NUM[args.model], f"Matching layer index should be smaller than total number of layers({TOTAL_LAYER_NUM[args.model]} for {args.model})"
+
+    PARAMS['matching_layer'] = matching_layer
 
     for j, (video, gt_trajectory, visibility, query_points_i, video_ori) in enumerate(dataloader):
-        # if args.model == 'hunyuan_t2v' and j <= 9: 
-        #     evaluator.cnt += 1
-        #     continue
-
         valid_mask = (query_points_i[:,:,0] == 0)
         if not torch.any(valid_mask):
             continue
@@ -234,9 +248,10 @@ def main(args):
         _, T, _, H, W = video.shape
 
         if args.vis_video:
+            _, _, _, H_ori, W_ori = video_ori.shape
             gt_trajectory_vis = gt_trajectory.clone()
-            gt_trajectory_vis[..., 0] *= (720 / 256)
-            gt_trajectory_vis[..., 1] *= (480 / 256)
+            gt_trajectory_vis[..., 0] *= (W_ori / 256)
+            gt_trajectory_vis[..., 1] *= (H_ori / 256)
             vis = Visualizer(save_dir=os.path.join(output_dir, 'gt'), pad_value=0, linewidth=3, show_first_frame=1, tracks_leave_trace=args.tracks_leave_trace)
             frames = vis.visualize(video=video_ori, tracks=gt_trajectory_vis, filename =f"{j:03d}.mp4", query_frame=0, visibility=visibility)
             
@@ -245,15 +260,13 @@ def main(args):
             for f, frame in enumerate(frames[0]):
                 to_pil(frame).save(os.path.join(gt_dir, f'{f}.png'))
 
-        stride_val = 16
-        h = H // stride_val
-        w = W // stride_val
+        latent_scaling_size = 16
+        h = H // latent_scaling_size
+        w = W // latent_scaling_size
 
-        chunk_len = args.chunk_frame_num - 1
-        interval = T // 12 if args.chunk_interval else 1
-        chunk_start, chunk_end = 1, chunk_len * interval + 1
+        interval = T // 12 if args.chunk_frame_interval else 1
+        chunk_start, chunk_end = 1, (args.chunk_len - 2) * interval + 1
 
-        query_frames, key_frames = None, None
         visited_idx = set([])
         correlation_per_chunk = []
         while len(visited_idx) < T - 1:
@@ -262,12 +275,13 @@ def main(args):
             # Extract the current chunk.
             chunk_video = video[:, torch.tensor(chunk_indices),...]
             visited_idx.update(chunk_indices)
+
             # Process the chunk.
             query_frames, key_frames = process_chunk(
                 chunk_video=chunk_video,
                 generator=generator,
-                save_timestep=args.save_timestep, 
-                save_layer=args.save_layer,
+                matching_timestep=args.matching_timestep, 
+                matching_layer=args.matching_layer,
                 inverse_step=inverse_step,
                 pipe=pipe,
                 first_frame=video[:,0:1,...],
@@ -290,56 +304,57 @@ def main(args):
                 correlation_from_t_to_s = (correlation_from_t_to_s + correlation_from_t_to_s_T) / 2 # torch.Size([1, 1350, 30, 45])
                 corr.append(correlation_from_t_to_s)
             correlation_per_chunk.append((chunk_indices, corr))
-            chunk_start += stride
-            chunk_end = min(chunk_start + chunk_len * interval, T-1)
+
+            chunk_start += chunk_stride
+            chunk_end = min(chunk_start + (args.chunk_len - 2) * interval, T-1)
             
-        correlation = combine_correlations(correlation_per_chunk, average_overlap=args.average_chunk_overlap)
+        correlation = combine_correlations(correlation_per_chunk, average_overlap=args.average_overlapped_corr)
 
-        num_queries = query_points_i.size(1)
-
-        margin = W/(64*stride_val)
-        queried_coords_latent = query_points_i.clone().float()
         # Normalize the coordinate channels (assumes channel 1 and 2 are spatial coordinates)
-        queried_coords_latent[:,:,1] = queried_coords_latent[:,:,1] / stride_val
-        queried_coords_latent[:,:,2] = queried_coords_latent[:,:,2] / stride_val
-
-        # The initial track is the (normalized) query coordinates.
-        tracks = []
-        tracks.append(queried_coords_latent[:,:,1:].unsqueeze(1).to(PARAMS['qk_device']))
+        queried_coords_latent = query_points_i.clone().float()
+        queried_coords_latent[:,:,1] = queried_coords_latent[:,:,1] / latent_scaling_size
+        queried_coords_latent[:,:,2] = queried_coords_latent[:,:,2] / latent_scaling_size
 
         # Normalize coordinates for grid sampling.
+        margin = W/(64*latent_scaling_size)
         norm_coords = queried_coords_latent[:,:,1:].clone()
         norm_coords[:, :, 0] = (norm_coords[:, :, 0] / (w - margin)) * 2 - 1.0
         norm_coords[:, :, 1] = (norm_coords[:, :, 1] / (h - margin)) * 2 - 1.0
-        grid = norm_coords.view(B, num_queries, 1, 2).to(PARAMS['qk_device'])
 
-        # For each of 12 layers (or timesteps) compute the displacement.
+        num_queries = query_points_i.size(1)
+        grid = norm_coords.view(B, num_queries, 1, 2).to(args.pipe_device)
+
+        # The initial track is the (normalized) query coordinates.
+        tracks = []
+        tracks.append(queried_coords_latent[:,:,1:].unsqueeze(1).to(args.pipe_device))
+
+        # For each of 12 latents (or timesteps) compute the displacement.
         for k in range(len(correlation)):
-            correlation_from_t_to_s = correlation[k].to(PARAMS['qk_device']) / (len(save_timestep) * len(save_layer))
+            correlation_from_t_to_s = correlation[k].to(args.pipe_device) / (len(matching_timestep) * len(matching_layer))
             (x_source, y_source, x_target, y_target, score) = corr_to_matches(
-                correlation_from_t_to_s.view(1, h, w, h, w).unsqueeze(1), get_maximum=True, do_softmax=True, device=PARAMS['qk_device']
+                correlation_from_t_to_s.view(1, h, w, h, w).unsqueeze(1), get_maximum=True, do_softmax=True, device=args.pipe_device
             )
             mapping_set = torch.cat((x_source.unsqueeze(-1), y_source.unsqueeze(-1)), dim=-1)
             mapping_set = mapping_set.view(1, h, w, 2).permute(0, 3, 1, 2)
-            track = F.grid_sample(mapping_set.to(correlation_from_t_to_s.device), grid=grid, align_corners=True)
+            track = F.grid_sample(mapping_set.to(correlation_from_t_to_s.device), grid=grid, mode='bilinear', align_corners=True)
             track = rearrange(track, "b c h w -> b () (h w) c")
             tracks.append(track)
 
         trajectory = torch.cat(tracks, dim=1)
 
         # Scale back the coordinates.
-        scaling_factor_x = stride_val 
-        scaling_factor_y = stride_val
+        scaling_factor_x = latent_scaling_size 
+        scaling_factor_y = latent_scaling_size
 
         trajectory[..., 0] *= scaling_factor_x
         trajectory[..., 1] *= scaling_factor_y
 
         if args.vis_video:
             vis_traj = trajectory.clone()
-            vis_traj[..., 0] *= (720 / W)
-            vis_traj[..., 1] *= (480 / H)
+            vis_traj[..., 0] *= (W_ori / W)
+            vis_traj[..., 1] *= (H_ori / H)
             vis = Visualizer(save_dir=os.path.join(output_dir, 'pred'), pad_value=0, linewidth=3, show_first_frame=1, tracks_leave_trace=args.tracks_leave_trace)
-            frames = vis.visualize(video=video_ori, tracks=vis_traj, filename =f"{j:03d}.mp4", query_frame=0, visibility=visibility)
+            frames = vis.visualize(video=video_ori, tracks=vis_traj, filename =f"{j:03d}.mp4", query_frame=0)
             
             pred_dir = os.path.join(output_dir, 'pred', f'{j:03d}')
             os.makedirs(pred_dir, exist_ok=True)
@@ -364,36 +379,34 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, default='cogvideox_t2v')
+    parser.add_argument("--model", type=str, choices=["cogvideox_t2v_5b", "cogvideox_t2v_2b", "cogvideox_i2v_5b", "cogvideox_i2v_2b", "hunyuan_t2v"], default='cogvideox_t2v_5b')
     parser.add_argument("--output_dir", type=str, default='./output')
     parser.add_argument('--tapvid_root', type=str)
-    parser.add_argument('--eval_dataset', type=str, choices=["davis_first", "rgb_stacking_first", "kinetics_first"], default="davis_first")
+    parser.add_argument('--eval_dataset', type=str, choices=["davis_first", "kinetics_first"], default="davis_first")
 
     parser.add_argument('--resize_h', type=int, default=480)
     parser.add_argument('--resize_w', type=int, default=720)
 
-    parser.add_argument('--stride', type=int, default=12)
-    parser.add_argument('--chunk_frame_num', type=int, default=12)
-    parser.add_argument('--chunk_interval', type=bool, default=True)
-    parser.add_argument('--average_chunk_overlap', type=bool, default=False)
+    parser.add_argument('--chunk_stride', type=int, default=12)
+    parser.add_argument('--chunk_len', type=int, default=13)
+    parser.add_argument('--chunk_frame_interval', action='store_true')
+    parser.add_argument('--average_overlapped_corr', action='store_true')
     parser.add_argument("--video_max_len", type=int, default=-1)
-    parser.add_argument("--do_inversion", type=bool, default=False)
-    parser.add_argument("--add_noise", type=bool, default=False)
+    parser.add_argument("--do_inversion", action='store_true')
+    parser.add_argument("--add_noise", action='store_true')
 
-    parser.add_argument('--save_layer', nargs='+', type=int)
-    parser.add_argument("--save_timestep", nargs='+', type=int)
+    parser.add_argument('--matching_layer', nargs='+', type=int)
+    parser.add_argument("--matching_timestep", nargs='+', type=int)
     parser.add_argument("--inverse_step", type=int, default=None)
     
-    parser.add_argument("--vis_video", type=bool, default=False)
+    parser.add_argument("--vis_video", action='store_true')
     parser.add_argument("--tracks_leave_trace", type=int, default=15)
 
     parser.add_argument("--pipe_device", type=str, default='cuda:0')
     parser.add_argument("--inv_pipe_device", type=str, default='cuda:0')
-    parser.add_argument("--qk_device", type=str, default='cuda:0')
 
     parser.add_argument('--start', type=int, default=0)
     parser.add_argument('--end', type=int, default=0)
-    parser.add_argument('--batch_size', type=int, default=1)
 
     args = parser.parse_args()
 
