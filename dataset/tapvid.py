@@ -114,13 +114,12 @@ def sample_queries_strided(
 
 
 class TAPVid(torch.utils.data.Dataset):
-    def __init__(self, args, batchfy=True):
+    def __init__(self, args):
 
         data_root = args.tapvid_root
         self.dataset_type = args.eval_dataset
         self.resize_shape = (args.resize_h, args.resize_w)
         self.queried_first = "first" in self.dataset_type
-        self.batchfy = batchfy
 
         if "kinetics" in self.dataset_type:
             all_paths = glob(os.path.join(data_root, "*_of_0010.pkl"))
@@ -129,18 +128,7 @@ class TAPVid(torch.utils.data.Dataset):
                 with open(pickle_path, "rb") as f:
                     data = pickle.load(f)
                     points_dataset = points_dataset + data
-            video_lengths = [len(data['video']) for data in points_dataset]
-            if batchfy:
-                self.points_dataset = [
-                    points_dataset[i] 
-                    for i, v_len in enumerate(video_lengths) if v_len == 250
-                ]
-            else:
-                self.points_dataset = points_dataset
-                # self.points_dataset = [
-                #     points_dataset[i] 
-                #     for i, v_len in enumerate(video_lengths) if v_len != 250
-                # ]
+            self.points_dataset = points_dataset
 
             if args.end == 0:
                 self.points_dataset = self.points_dataset[args.start:]
@@ -184,31 +172,22 @@ class TAPVid(torch.utils.data.Dataset):
 
         frames_ori = None 
         target_points = torch.tensor(self.points_dataset[video_name]["points"].copy())
-        # target_points = self.points_dataset[video_name]["points"].copy()
 
         if self.resize_shape is not None:
-            # if self.visualize:
-            #     frames_ori = resize_video_high_resol(frames, [self.resize_shape[0], self.resize_shape[1]])
             frames, frames_ori = resize_video(frames, [self.resize_shape[0], self.resize_shape[1]])
             target_points *= torch.tensor([256, 256])  # 1 should be mapped to 256
         else:
             target_points *= torch.tensor([256, 256])
 
         target_occ = torch.tensor(self.points_dataset[video_name]["occluded"].copy(), dtype=torch.bool)
-        # target_occ = self.points_dataset[video_name]["occluded"].copy()
         converted = sample_queries_first(target_occ, target_points, frames)
         assert converted["target_points"].shape[1] == converted["query_points"].shape[1]
 
-
         trajs = converted["target_points"][0].permute(1, 0, 2).float()  # T, N, D
-
-        visibles = torch.logical_not(converted["occluded"])[0].permute(
-            1, 0
-        )  # T, N
+        visibles = torch.logical_not(converted["occluded"])[0].permute(1, 0) # T, N
         query_points = converted["query_points"][0] # T, N
         query_points[:,1] *= (self.resize_shape[1] / 256)
         query_points[:,2] *= (self.resize_shape[0] / 256)
-
 
         return frames, trajs, visibles, query_points, frames_ori
 

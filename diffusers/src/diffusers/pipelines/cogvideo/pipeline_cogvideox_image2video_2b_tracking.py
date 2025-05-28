@@ -135,10 +135,10 @@ class CogVideoXImageToVideoTrackPipeline2B(CogVideoXPipeline):
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
         max_sequence_length: int = 226,
         inverse_step: int = 49,
-        save_timestep: list = [49],
-        save_layer: list = [17],
+        matching_timestep: list = [49],
+        matching_layer: list = [17],
         video = None,
-        frame_as_latent = False,
+        frame_as_latent = True,
         add_noise = False,
         params = None
     ) -> Union[CogVideoXPipelineOutput, Tuple]:
@@ -278,9 +278,9 @@ class CogVideoXImageToVideoTrackPipeline2B(CogVideoXPipeline):
                 )[0]
                 noise_pred = noise_pred.float()
                 
-                if i in save_timestep:
+                if i in matching_timestep:
                     with torch.no_grad():
-                        for l in save_layer:
+                        for l in matching_layer:
                             blk = self.transformer.transformer_blocks[l]
                             Q = blk.attn1.processor.query[1]
                             K = blk.attn1.processor.key[1]

@@ -533,10 +533,10 @@ class HunyuanVideoTrackPipeline(DiffusionPipeline, HunyuanVideoLoraLoaderMixin):
         prompt_template: Dict[str, Any] = DEFAULT_PROMPT_TEMPLATE,
         max_sequence_length: int = 256,
         inverse_step: int = 49,
-        save_timestep: list = [49],
-        save_layer: list = [17],
+        matching_timestep: list = [49],
+        matching_layer: list = [17],
         video = None,
-        frame_as_latent = False,
+        frame_as_latent = True,
         add_noise = False,
         params = None
     ):
@@ -778,15 +778,16 @@ class HunyuanVideoTrackPipeline(DiffusionPipeline, HunyuanVideoLoraLoaderMixin):
                 
                 
                 total_blocks = self.transformer.transformer_blocks + self.transformer.single_transformer_blocks
-                if i in save_timestep:
+                if i in matching_timestep:
                     with torch.no_grad():
-                        blk = total_blocks[params['save_layer'][0]]
-                        Q = blk.attn.processor.query[0]
-                        K = blk.attn.processor.key[0]
-                        queries.append(Q)
-                        keys.append(K)
-                        del blk.attn.processor.query
-                        del blk.attn.processor.key
+                        for l in matching_layer:
+                            blk = total_blocks[l]
+                            Q = blk.attn.processor.query[0]
+                            K = blk.attn.processor.key[0]
+                            queries.append(Q)
+                            keys.append(K)
+                            del blk.attn.processor.query
+                            del blk.attn.processor.key
 
                 # compute the previous noisy sample x_t -> x_t-1
                 latents = self.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
