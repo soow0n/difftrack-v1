@@ -14,11 +14,10 @@ import matplotlib.cm as cm
 def interpolate_trajectory(trajectory, target_frames=49, mode="linear"):
 
     b, f, n, c = trajectory.shape 
-    trajectory = trajectory.permute(0, 2, 3, 1)
-    trajectory_interp = F.interpolate(trajectory[0], size=target_frames, mode=mode, align_corners=False)
+    trajectory = trajectory.permute(0, 2, 3, 1).reshape(-1, c, f)
+    trajectory_interp = F.interpolate(trajectory, size=target_frames, mode=mode, align_corners=False)
 
-    trajectory_interp = trajectory_interp.permute(2, 0, 1)
-    trajectory_interp = trajectory_interp.unsqueeze(0)
+    trajectory_interp = trajectory_interp.reshape(b, n, c, target_frames).permute(0, 3, 1, 2)
 
     return trajectory_interp
 
