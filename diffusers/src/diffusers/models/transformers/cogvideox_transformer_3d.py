@@ -499,12 +499,12 @@ class CogVideoXTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Cac
                     args=args,
                 )
             else:
-                if i in args['save_layer']:
-                    args['feature'] = True
-                    args['query_key'] = True
-                else:
-                    args['feature'] = False
-                    args['query_key'] = False
+                save_descriptor = True if i in args['matching_layer'] else False
+
+                args['feature'] = save_descriptor
+                args['query_key'] = save_descriptor
+                args['trajectory_head'] = True if i == args['head_matching_layer'] else False
+
                 hidden_states, encoder_hidden_states = block(
                     hidden_states=hidden_states,
                     encoder_hidden_states=encoder_hidden_states,

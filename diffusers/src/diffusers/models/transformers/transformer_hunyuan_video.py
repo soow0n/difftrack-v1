@@ -140,69 +140,147 @@ class HunyuanVideoAttnProcessor2_0:
 
         if args['trajectory']:
             f_num = query[:, :, :-text_seq_length].shape[2] // (h*w)  # 17550 // (30*45) => 13
-            grid_size = 20 if args['video_mode'] == 'fg' else 10
-            xy = get_points_on_a_grid(grid_size, (H, W), device=query.device) # torch.Size([1, grid*grid, 2]) 첫번째 RGB 프레임에 grid 찍기
             
-            queried_coords = xy / stride # 원본 dimension -> latent dimension에 맞추기 
-            
-            if args['matching_mode'] == "qk":
-                query_frames = rearrange(query[:, :, :-text_seq_length], 'b head (f h w) c -> b head f (h w) c', f=f_num, h=h, w=w)
-                key_frames = rearrange(key[:, :, :-text_seq_length], 'b head (f h w) c -> b head f (h w) c', f=f_num, h=h, w=w)
+            if args['query_coords'] is None:
+                grid_size = 20 if args['video_mode'] == 'fg' else 10
+                xy = get_points_on_a_grid(grid_size, (H, W), device=query.device) # torch.Size([1, grid*grid, 2]) 첫번째 RGB 프레임에 grid 찍기
+                queried_coords = xy / stride # 원본 dimension -> latent dimension에 맞추기 
             else:
-                mat_hidden_states = rearrange(hidden_states[:, :-text_seq_length, :], 'b (f h w) c -> b f (h w) c', f=f_num, h=h, w=w)
+                queried_coords = args['query_coords'].to(query.device) / stride
+            
+            query_frames = rearrange(query[:, :, :-text_seq_length], 'b head (f h w) c -> b head f (h w) c', f=f_num, h=h, w=w)
+            key_frames = rearrange(key[:, :, :-text_seq_length], 'b head (f h w) c -> b head f (h w) c', f=f_num, h=h, w=w)
+            
+            mat_hidden_states = rearrange(hidden_states[:, :-text_seq_length, :], 'b (f h w) c -> b f (h w) c', f=f_num, h=h, w=w)
         
-            tracks = []
-            tracks.append(queried_coords.unsqueeze(1))  
-            self.queried_coords = queried_coords
-            
-            
+
+            tracks_qk = []
+            tracks_qk.append(queried_coords.unsqueeze(1)) 
             for k in range(1, f_num):
-                if args['matching_mode'] == "qk":
-                    attn_tts = torch.einsum("b h i d, b h j d -> b h i j", query_frames[:, :, 0, :, :], key_frames[:, :, k, :, :]) / math.sqrt(head_dim)
-                    attn_stt = torch.einsum("b h i d, b h j d -> b h i j", query_frames[:, :, k, :, :], key_frames[:, :, 0, :, :]) / math.sqrt(head_dim)
-                else:
-                    attn_tts = (mat_hidden_states[:, 0, :, :] @ mat_hidden_states[:, k, :, :].transpose(-1, -2))
-                    attn_stt = (mat_hidden_states[:, k, :, :] @ mat_hidden_states[:, 0, :, :].transpose(-1, -2))
-                
+                attn_tts = torch.einsum("b h i d, b h j d -> b h i j", query_frames[:, :, 0, :, :], key_frames[:, :, k, :, :]) / math.sqrt(head_dim)
+                attn_stt = torch.einsum("b h i d, b h j d -> b h i j", query_frames[:, :, k, :, :], key_frames[:, :, 0, :, :]) / math.sqrt(head_dim)
                 attn_tts = attn_tts.softmax(dim=-1)
                 attn_stt = attn_stt.softmax(dim=-1)
-                if args['matching_mode'] == "qk":
-                    attn_tts = attn_tts.mean(1)
-                    attn_stt = attn_stt.mean(1)
+                attn_tts = attn_tts.mean(1)
+                attn_stt = attn_stt.mean(1)
 
                 correlation_from_t_to_s = rearrange(attn_tts, 'b (h w) c -> b c h w', h=h, w=w) # head mean
                 correlation_from_t_to_s_T = rearrange(attn_stt, 'b c (h w) -> b c h w', h=h, w=w)
                 correlation_from_t_to_s = (correlation_from_t_to_s + correlation_from_t_to_s_T) / 2 # torch.Size([1, 1350, 30, 45])
-
+                
                 (x_source, y_source, x_target, y_target, score) = corr_to_matches(correlation_from_t_to_s.view(1, h, w, h, w).unsqueeze(1), get_maximum=True, do_softmax=True, device=query.device)
                 mapping_set = torch.cat((x_source.unsqueeze(-1), y_source.unsqueeze(-1)), dim=-1).view(1, h, w, 2).permute(0, 3, 1, 2)
+
                 sampled_queried_coords = queried_coords.clone()
                 margin = 720/(64*16)
                 sampled_queried_coords[:, :, 0] = (sampled_queried_coords[:, :, 0] / (w - margin)) * 2 -1.0
                 sampled_queried_coords[:, :, 1] = (sampled_queried_coords[:, :, 1] / (h - margin)) * 2 -1.0
                 
-                track = F.grid_sample(
-                    mapping_set.to(query.device), 
-                    sampled_queried_coords.view(1, grid_size, grid_size, 2).to(query.device), 
-                    align_corners=True
-                )
+                B, N = sampled_queried_coords.shape[0], sampled_queried_coords.shape[1]
+                grid = sampled_queried_coords.view(B, N, 1, 2).to(query.device)
+                
+                track = F.grid_sample(mapping_set.to(query.device), grid=grid, align_corners=True)
                 track = rearrange(track, "b c h w -> b () (h w) c") # torch.Size([1, 1, 25, 2])
-                tracks.append(track)  
+                tracks_qk.append(track)
 
-            trajectory = torch.cat(tracks, dim=1)
-            trajectory = interpolate_trajectory(trajectory, target_frames=49, mode="linear")
+            trajectory_qk = torch.cat(tracks_qk, dim=1)
+            trajectory_qk = interpolate_trajectory(trajectory_qk, target_frames=49, mode="linear")
+
             scaling_factor_x = stride 
             scaling_factor_y = stride
-            trajectory[..., 0] *= scaling_factor_x  # X축 스케일링
-            trajectory[..., 1] *= scaling_factor_y  # Y축 스케일링
-            self.trajectory = trajectory
+
+            trajectory_qk[..., 0] *= scaling_factor_x  # X축 스케일링
+            trajectory_qk[..., 1] *= scaling_factor_y  # Y축 스케일링
+
+            self.trajectory_qk = trajectory_qk
+
+
+            tracks_feat = []
+            tracks_feat.append(queried_coords.unsqueeze(1))
+            for k in range(1, f_num):
+                attn_tts = (mat_hidden_states[:, 0, :, :] @ mat_hidden_states[:, k, :, :].transpose(-1, -2))
+                attn_tts = attn_tts.softmax(dim=-1)
+                correlation_from_t_to_s = rearrange(attn_tts, 'b (h w) c -> b c h w', h=h, w=w) # head mean
+                
+                (x_source, y_source, x_target, y_target, score) = corr_to_matches(correlation_from_t_to_s.view(1, h, w, h, w).unsqueeze(1), get_maximum=True, do_softmax=True, device=query.device)
+                mapping_set = torch.cat((x_source.unsqueeze(-1), y_source.unsqueeze(-1)), dim=-1).view(1, h, w, 2).permute(0, 3, 1, 2)
+
+                sampled_queried_coords = queried_coords.clone()
+                margin = 720/(64*16)
+                sampled_queried_coords[:, :, 0] = (sampled_queried_coords[:, :, 0] / (w - margin)) * 2 -1.0
+                sampled_queried_coords[:, :, 1] = (sampled_queried_coords[:, :, 1] / (h - margin)) * 2 -1.0
+                
+                B, N = sampled_queried_coords.shape[0], sampled_queried_coords.shape[1]
+                grid = sampled_queried_coords.view(B, N, 1, 2).to(query.device)
+                
+                track = F.grid_sample(mapping_set.to(query.device), grid=grid, align_corners=True)
+                track = rearrange(track, "b c h w -> b () (h w) c") # torch.Size([1, 1, 25, 2])
+                tracks_feat.append(track)
+
+            trajectory_feat = torch.cat(tracks_feat, dim=1)
+            trajectory_feat = interpolate_trajectory(trajectory_feat, target_frames=49, mode="linear")
+
+            scaling_factor_x = stride 
+            scaling_factor_y = stride
+
+            trajectory_feat[..., 0] *= scaling_factor_x  # X축 스케일링
+            trajectory_feat[..., 1] *= scaling_factor_y  # Y축 스케일링
+
+            self.trajectory_feat = trajectory_feat
+
+            if args['trajectory_head']:
+                head_num = query_frames.shape[1]
+
+                tracks_head = []
+                tracks_head.append(queried_coords.expand(head_num, -1, -1).unsqueeze(1))
+                for k in range(1, f_num):
+                    attn_tts = torch.einsum("b h i d, b h j d -> b h i j", query_frames[:, :, 0, :, :], key_frames[:, :, k, :, :]) / math.sqrt(head_dim)
+                    attn_stt = torch.einsum("b h i d, b h j d -> b h i j", query_frames[:, :, k, :, :], key_frames[:, :, 0, :, :]) / math.sqrt(head_dim)
+                    attn_tts = attn_tts.softmax(dim=-1)
+                    attn_stt = attn_stt.softmax(dim=-1)
+
+                    correlation_from_t_to_s = rearrange(attn_tts, 'b head (h w) c -> b head c h w', h=h, w=w)
+                    correlation_from_t_to_s_T = rearrange(attn_stt, 'b head c (h w) -> b head c h w', h=h, w=w)
+                    correlation_from_t_to_s = (correlation_from_t_to_s + correlation_from_t_to_s_T) / 2
+                    
+                    (x_source, y_source, x_target, y_target, score) = corr_to_matches(correlation_from_t_to_s.view(head_num, h, w, h, w).unsqueeze(1), get_maximum=True, do_softmax=True, device=query.device)
+                    mapping_set = torch.cat((x_source.unsqueeze(-1), y_source.unsqueeze(-1)), dim=-1).view(head_num, h, w, 2).permute(0, 3, 1, 2)
+
+                    sampled_queried_coords = queried_coords.clone()
+                    margin = 720/(64*16)
+                    sampled_queried_coords[:, :, 0] = (sampled_queried_coords[:, :, 0] / (w - margin)) * 2 -1.0
+                    sampled_queried_coords[:, :, 1] = (sampled_queried_coords[:, :, 1] / (h - margin)) * 2 -1.0
+                    
+                    B, N = sampled_queried_coords.shape[0], sampled_queried_coords.shape[1]
+                    grid = sampled_queried_coords.view(B, N, 1, 2).expand(head_num, -1, -1, -1).to(query.device)
+                    
+                    track = F.grid_sample(mapping_set.to(query.device), grid=grid, align_corners=True)
+                    track = rearrange(track, "b c h w -> b () (h w) c") # torch.Size([1, 1, 25, 2])
+                    tracks_head.append(track)
+
+                trajectory_head = torch.cat(tracks_head, dim=1)
+                trajectory_head = interpolate_trajectory(trajectory_head, target_frames=49, mode="linear")
+
+                scaling_factor_x = stride 
+                scaling_factor_y = stride
+
+                trajectory_head[..., 0] *= scaling_factor_x  # X축 스케일링
+                trajectory_head[..., 1] *= scaling_factor_y  # Y축 스케일링
+
+                self.trajectory_head = trajectory_head
             
         if args['attn_weight']:
-            grid_size = 20 if args['video_mode'] == 'fg' else 10
-            xy = get_points_on_a_grid(grid_size, (H, W), device=query.device) # torch.Size([1, grid*grid, 2]) 첫번째 RGB 프레임에 grid 찍기
+            if args['query_coords'] is None:
+                grid_size = 20 if args['video_mode'] == 'fg' else 10
+                xy = get_points_on_a_grid(grid_size, (H, W), device=query.device) # torch.Size([1, grid*grid, 2]) 첫번째 RGB 프레임에 grid 찍기
+                queried_coords = xy / stride # 원본 dimension -> latent dimension에 맞추기 
+            else:
+                queried_coords = args['query_coords'].to(query.device) / stride
+            queried_coords = torch.round(queried_coords).to(torch.int)
+
             d_k = query.shape[-1]  # 64
             first_query = query[0, :, :h * w, :]
-            queried_coords = torch.round(xy/stride).to(torch.int)
+            
             x_pos, y_pos = queried_coords[0,:,0], queried_coords[0,:,1]
             x_pos = torch.clip(x_pos, 0, h-1)
             y_pos = torch.clip(y_pos, 0, w-1)
@@ -214,9 +292,8 @@ class HunyuanVideoAttnProcessor2_0:
             self.attn_weight = attn_weight
             
         if args['query_key']:
-            # qk_device = args['qk_device']
-            self.query = query #.to(qk_device)
-            self.key = key #.to(qk_device)
+            self.query = query
+            self.key = key
 
         # 6. Output projection
         if encoder_hidden_states is not None:
@@ -231,6 +308,9 @@ class HunyuanVideoAttnProcessor2_0:
 
             if getattr(attn, "to_add_out", None) is not None:
                 encoder_hidden_states = attn.to_add_out(encoder_hidden_states)
+
+        if args['feature']:
+            self.feature = hidden_states
 
         return hidden_states, encoder_hidden_states
 
@@ -1212,8 +1292,10 @@ class HunyuanVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, 
 
         else:
             for i, block in enumerate(self.transformer_blocks):
-                if i > args['save_layer'][0]: break
-                args['query_key'] = True if i in args['save_layer'] else False
+                save_descriptor = True if i in args['matching_layer'] else False
+                args['feature'] = save_descriptor
+                args['query_key'] = save_descriptor
+                args['trajectory_head'] = True if i == args['head_matching_layer'] else False
 
                 hidden_states, encoder_hidden_states = block(
                     hidden_states,
@@ -1227,8 +1309,10 @@ class HunyuanVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, 
                 )
 
             for i, block in enumerate(self.single_transformer_blocks):
-                if (i + len(self.transformer_blocks)) > args['save_layer'][0]: break
-                args['query_key'] = True if (i + len(self.transformer_blocks)) in args['save_layer'] else False
+                save_descriptor = True if i in args['matching_layer'] else False
+                args['feature'] = save_descriptor
+                args['query_key'] = save_descriptor
+                args['trajectory_head'] = True if i == args['head_matching_layer'] else False
 
                 hidden_states, encoder_hidden_states = block(
                     hidden_states,

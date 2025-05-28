@@ -2887,28 +2887,26 @@ class CogVideoXAttnProcessor2_0:
         stride = 16
         h = H // stride
         w = W // stride
-        if args['trajectory']:            
+        if args['trajectory']:  
+         
             f_num = query[:, :, text_seq_length:].shape[2] // (h*w)  # 17550 // (30*45) => 13
-
+            
             if args['query_coords'] is None:
                 grid_size = 20 if args['video_mode'] == 'fg' else 10
                 xy = get_points_on_a_grid(grid_size, (H, W), device=query.device) # torch.Size([1, grid*grid, 2]) 첫번째 RGB 프레임에 grid 찍기
                 queried_coords = xy / stride # 원본 dimension -> latent dimension에 맞추기 
             else:
-                queried_coords = args['query_coords'].to(query.device)
+                queried_coords = args['query_coords'].to(query.device) / stride
             
             query_frames = rearrange(query[1:, :, text_seq_length:], 'b head (f h w) c -> b head f (h w) c', f=f_num, h=h, w=w)
             key_frames = rearrange(key[1:, :, text_seq_length:], 'b head (f h w) c -> b head f (h w) c', f=f_num, h=h, w=w)
 
             mat_hidden_states = rearrange(hidden_states[1:, text_seq_length:], 'b (f h w) c -> b f (h w) c', f=f_num, h=h, w=w)
-            
-            tracks_qk, tracks_feat = [], []
+
+            tracks_qk = []
             tracks_qk.append(queried_coords.unsqueeze(1))
-            tracks_feat.append(queried_coords.unsqueeze(1))
-                
-            self.queried_coords = queried_coords
-            
             for k in range(1, f_num):
+                
                 attn_tts = torch.einsum("b h i d, b h j d -> b h i j", query_frames[:, :, 0, :, :], key_frames[:, :, k, :, :]) / math.sqrt(head_dim)
                 attn_stt = torch.einsum("b h i d, b h j d -> b h i j", query_frames[:, :, k, :, :], key_frames[:, :, 0, :, :]) / math.sqrt(head_dim)
                 attn_tts = attn_tts.softmax(dim=-1)
@@ -2919,8 +2917,7 @@ class CogVideoXAttnProcessor2_0:
                 correlation_from_t_to_s = rearrange(attn_tts, 'b (h w) c -> b c h w', h=h, w=w) # head mean
                 correlation_from_t_to_s_T = rearrange(attn_stt, 'b c (h w) -> b c h w', h=h, w=w)
                 correlation_from_t_to_s = (correlation_from_t_to_s + correlation_from_t_to_s_T) / 2 # torch.Size([1, 1350, 30, 45])
-                
-                (x_source, y_source, x_target, y_target, score) = corr_to_matches(correlation_from_t_to_s.view(1, h, w, h, w).unsqueeze(1), get_maximum=True, do_softmax=True, device=query.device)
+                (x_source, y_source, x_target, y_target, score) = corr_to_matches(correlation_from_t_to_s.view(1, h, w, h, w).unsqueeze(1).to(query.device), get_maximum=True, do_softmax=True, device=query.device)
                 mapping_set = torch.cat((x_source.unsqueeze(-1), y_source.unsqueeze(-1)), dim=-1).view(1, h, w, 2).permute(0, 3, 1, 2)
 
                 sampled_queried_coords = queried_coords.clone()
@@ -2934,6 +2931,8 @@ class CogVideoXAttnProcessor2_0:
                 track = F.grid_sample(mapping_set.to(query.device), grid=grid, align_corners=True)
                 track = rearrange(track, "b c h w -> b () (h w) c") # torch.Size([1, 1, 25, 2])
                 tracks_qk.append(track)
+
+                del correlation_from_t_to_s
 
             trajectory_qk = torch.cat(tracks_qk, dim=1)
             trajectory_qk = interpolate_trajectory(trajectory_qk, target_frames=49, mode="linear")
@@ -2946,15 +2945,13 @@ class CogVideoXAttnProcessor2_0:
 
             self.trajectory_qk = trajectory_qk
 
+
+            tracks_feat = []
+            tracks_feat.append(queried_coords.unsqueeze(1))
             for k in range(1, f_num):
                 attn_tts = (mat_hidden_states[:, 0, :, :] @ mat_hidden_states[:, k, :, :].transpose(-1, -2))
-                attn_stt = (mat_hidden_states[:, k, :, :] @ mat_hidden_states[:, 0, :, :].transpose(-1, -2))
                 attn_tts = attn_tts.softmax(dim=-1)
-                attn_stt = attn_stt.softmax(dim=-1)
-
                 correlation_from_t_to_s = rearrange(attn_tts, 'b (h w) c -> b c h w', h=h, w=w) # head mean
-                correlation_from_t_to_s_T = rearrange(attn_stt, 'b c (h w) -> b c h w', h=h, w=w)
-                correlation_from_t_to_s = (correlation_from_t_to_s + correlation_from_t_to_s_T) / 2 # torch.Size([1, 1350, 30, 45])
                 
                 (x_source, y_source, x_target, y_target, score) = corr_to_matches(correlation_from_t_to_s.view(1, h, w, h, w).unsqueeze(1), get_maximum=True, do_softmax=True, device=query.device)
                 mapping_set = torch.cat((x_source.unsqueeze(-1), y_source.unsqueeze(-1)), dim=-1).view(1, h, w, 2).permute(0, 3, 1, 2)
@@ -2969,7 +2966,7 @@ class CogVideoXAttnProcessor2_0:
                 
                 track = F.grid_sample(mapping_set.to(query.device), grid=grid, align_corners=True)
                 track = rearrange(track, "b c h w -> b () (h w) c") # torch.Size([1, 1, 25, 2])
-                tracks_qk.append(track)
+                tracks_feat.append(track)
 
             trajectory_feat = torch.cat(tracks_feat, dim=1)
             trajectory_feat = interpolate_trajectory(trajectory_feat, target_frames=49, mode="linear")
@@ -2981,6 +2978,48 @@ class CogVideoXAttnProcessor2_0:
             trajectory_feat[..., 1] *= scaling_factor_y  # Y축 스케일링
 
             self.trajectory_feat = trajectory_feat
+
+            
+            if args['trajectory_head']:
+                head_num = query_frames.shape[1]
+
+                tracks_head = []
+                tracks_head.append(queried_coords.expand(head_num, -1, -1).unsqueeze(1))
+                for k in range(1, f_num):
+                    attn_tts = torch.einsum("b h i d, b h j d -> b h i j", query_frames[:, :, 0, :, :], key_frames[:, :, k, :, :]) / math.sqrt(head_dim)
+                    attn_stt = torch.einsum("b h i d, b h j d -> b h i j", query_frames[:, :, k, :, :], key_frames[:, :, 0, :, :]) / math.sqrt(head_dim)
+                    attn_tts = attn_tts.softmax(dim=-1)
+                    attn_stt = attn_stt.softmax(dim=-1)
+
+                    correlation_from_t_to_s = rearrange(attn_tts, 'b head (h w) c -> b head c h w', h=h, w=w)
+                    correlation_from_t_to_s_T = rearrange(attn_stt, 'b head c (h w) -> b head c h w', h=h, w=w)
+                    correlation_from_t_to_s = (correlation_from_t_to_s + correlation_from_t_to_s_T) / 2
+                    
+                    (x_source, y_source, x_target, y_target, score) = corr_to_matches(correlation_from_t_to_s.view(head_num, h, w, h, w).unsqueeze(1), get_maximum=True, do_softmax=True, device=query.device)
+                    mapping_set = torch.cat((x_source.unsqueeze(-1), y_source.unsqueeze(-1)), dim=-1).view(head_num, h, w, 2).permute(0, 3, 1, 2)
+
+                    sampled_queried_coords = queried_coords.clone()
+                    margin = 720/(64*16)
+                    sampled_queried_coords[:, :, 0] = (sampled_queried_coords[:, :, 0] / (w - margin)) * 2 -1.0
+                    sampled_queried_coords[:, :, 1] = (sampled_queried_coords[:, :, 1] / (h - margin)) * 2 -1.0
+                    
+                    B, N = sampled_queried_coords.shape[0], sampled_queried_coords.shape[1]
+                    grid = sampled_queried_coords.view(B, N, 1, 2).expand(head_num, -1, -1, -1).to(query.device)
+                    
+                    track = F.grid_sample(mapping_set.to(query.device), grid=grid, align_corners=True)
+                    track = rearrange(track, "b c h w -> b () (h w) c") # torch.Size([1, 1, 25, 2])
+                    tracks_head.append(track)
+
+                trajectory_head = torch.cat(tracks_head, dim=1)
+                trajectory_head = interpolate_trajectory(trajectory_head, target_frames=49, mode="linear")
+
+                scaling_factor_x = stride 
+                scaling_factor_y = stride
+
+                trajectory_head[..., 0] *= scaling_factor_x  # X축 스케일링
+                trajectory_head[..., 1] *= scaling_factor_y  # Y축 스케일링
+
+                self.trajectory_head = trajectory_head
                 
         if args['attn_weight']:
             if args['query_coords'] is None:
@@ -2988,16 +3027,16 @@ class CogVideoXAttnProcessor2_0:
                 xy = get_points_on_a_grid(grid_size, (H, W), device=query.device) # torch.Size([1, grid*grid, 2]) 첫번째 RGB 프레임에 grid 찍기
                 queried_coords = xy / stride # 원본 dimension -> latent dimension에 맞추기 
             else:
-                queried_coords = args['query_coords'].to(query.device)
+                queried_coords = args['query_coords'].to(query.device) / stride
             queried_coords = torch.round(queried_coords).to(torch.int)
             
-            d_k = query.shape[-1]  # 64
+            B, head_num, _, d_k = query.shape
             first_query = query[:, :, text_seq_length: text_seq_length + h * w, :][1]
             
             x_pos, y_pos = queried_coords[0,:,0], queried_coords[0,:,1]
             x_pos = torch.clip(x_pos, 0, h-1)
             y_pos = torch.clip(y_pos, 0, w-1)
-            first_query = first_query.reshape(30, h, w, d_k)[:, x_pos, y_pos, :]
+            first_query = first_query.reshape(head_num, h, w, d_k)[:, x_pos, y_pos, :]
     
             attn_score = torch.matmul(first_query, key[1].transpose(-2, -1)) / torch.sqrt(torch.tensor(d_k))
             attn_probs = torch.nn.functional.softmax(attn_score, dim=-1)  # Shape: [1, 30, 2048, 2048]

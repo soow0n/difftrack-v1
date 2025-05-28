@@ -836,118 +836,7 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
                 )[0]
                 noise_pred = noise_pred.float()
 
-                # Head
-                if params['debug']:
-                    blk = self.transformer.transformer_blocks[17]
-                    query = blk.attn1.processor.query
-                    key = blk.attn1.processor.key
-
-                    H = 480
-                    W = 720
-                    stride = 16
-                    h = H // stride
-                    w = W // stride
-                    text_seq_length = 226
-                    if params['query_key']:
-                        
-                        f_num = query[:, :, text_seq_length:].shape[2] // (h*w)  # 17550 // (30*45) => 13
-
-                        grid_size = 20 if params['video_mode'] == 'fg' else 10
-
-                        xy = get_points_on_a_grid(grid_size, (H, W), device=query.device) # torch.Size([1, grid*grid, 2]) 첫번째 RGB 프레임에 grid 찍기
-                        
-                        queried_coords = xy / stride # 원본 dimension -> latent dimension에 맞추기 
-                        
-                        
-                        query_frames = rearrange(query[:, :, text_seq_length:][1][None,...], 'b head (f h w) c -> b head f (h w) c', f=f_num, h=h, w=w)
-                        key_frames = rearrange(key[:, :, text_seq_length:][1][None,...], 'b head (f h w) c -> b head f (h w) c', f=f_num, h=h, w=w)
-                        
-                        
-                        B, head_num, frame_len, _, head_dim = query_frames.shape
-                        tracks = []
-                        if params['head']:
-                            tracks.append(queried_coords.expand(head_num, -1, -1).unsqueeze(1))
-                        else:
-                            tracks.append(queried_coords.unsqueeze(0))
-                            
-                        self.queried_coords = queried_coords
-                        
-                        correlation = []
-
-                        for k in range(1, f_num):
-                            attn_tts = torch.einsum("b h i d, b h j d -> b h i j", query_frames[:, :, 0, :, :], key_frames[:, :, k, :, :]) / math.sqrt(head_dim)
-                            attn_stt = torch.einsum("b h i d, b h j d -> b h i j", query_frames[:, :, k, :, :], key_frames[:, :, 0, :, :]) / math.sqrt(head_dim)
-
-                            attn_tts = attn_tts.softmax(dim=-1)
-                            attn_stt = attn_stt.softmax(dim=-1)
-                            
-
-                            if params['head']: 
-                                correlation_from_t_to_s = rearrange(attn_tts, 'b head (h w) c -> b head c h w', h=h, w=w) # head mean
-                                correlation_from_t_to_s_T = rearrange(attn_stt, 'b head c (h w) -> b head c h w', h=h, w=w)
-                                correlation_from_t_to_s = (correlation_from_t_to_s + correlation_from_t_to_s_T) / 2 # torch.Size([1, 1350, 30, 45])
-                                correlation.append(correlation_from_t_to_s)
-                                
-                                track_heads = []
-                                for head in range(attn_tts.shape[1]):
-                                    (x_source, y_source, x_target, y_target, score) = corr_to_matches(correlation_from_t_to_s[:, head].view(1, h, w, h, w).unsqueeze(1), get_maximum=True, do_softmax=True, device=query.device)
-                                    mapping_set = torch.cat((x_source.unsqueeze(-1), y_source.unsqueeze(-1)), dim=-1).view(1, h, w, 2).permute(0, 3, 1, 2)
-
-                                    sampled_queried_coords = queried_coords.clone()
-
-                                    margin = W/(64*stride)
-                                    sampled_queried_coords[:, :, 0] = (sampled_queried_coords[:, :, 0] / (w - margin)) * 2 -1.0
-                                    sampled_queried_coords[:, :, 1] = (sampled_queried_coords[:, :, 1] / (h - margin)) * 2 -1.0
-                                    
-                                    track = F.grid_sample(
-                                        mapping_set.to(query.device), 
-                                        sampled_queried_coords.view(1, grid_size, grid_size, 2).to(query.device), 
-                                        align_corners=True
-                                    )
-
-                                    track = rearrange(track, "b c h w -> b () (h w) c") # torch.Size([1, 1, 25, 2])
-                                    track_heads.append(track)
-                                tracks.append(torch.cat(track_heads, dim=0))  
-                            else:
-                                attn_tts = attn_tts.mean(1)
-                                attn_stt = attn_stt.mean(1)
-                                correlation_from_t_to_s = rearrange(attn_tts, 'b (h w) c -> b c h w', h=h, w=w) # head mean
-                                correlation_from_t_to_s_T = rearrange(attn_stt, 'b c (h w) -> b c h w', h=h, w=w)
-                                correlation_from_t_to_s = (correlation_from_t_to_s + correlation_from_t_to_s_T) / 2 # torch.Size([1, 1350, 30, 45])
-                                correlation.append(correlation_from_t_to_s)
-                                
-
-                                (x_source, y_source, x_target, y_target, score) = corr_to_matches(
-                                    correlation_from_t_to_s.view(1, h, w, h, w).unsqueeze(1), get_maximum=True, do_softmax=True, device=query.device)
-                                mapping_set = torch.cat((x_source.unsqueeze(-1), y_source.unsqueeze(-1)), dim=-1).view(1, h, w, 2).permute(0, 3, 1, 2)
-                                sampled_queried_coords = queried_coords.clone()
-                                margin = 720/(64*16)
-                                sampled_queried_coords[:, :, 0] = (sampled_queried_coords[:, :, 0] / (w - margin)) * 2 -1.0
-                                sampled_queried_coords[:, :, 1] = (sampled_queried_coords[:, :, 1] / (h - margin)) * 2 -1.0
-                                
-                                track = F.grid_sample(
-                                    mapping_set.to(query.device), 
-                                    sampled_queried_coords.view(1, grid_size, grid_size, 2).to(query.device), 
-                                    align_corners=True
-                                )
-                                track = rearrange(track, "b c h w -> b () (h w) c") # torch.Size([1, 1, 25, 2])
-                                tracks.append(track)  
-
-                        trajectory = torch.cat(tracks, dim=1)
-                        trajectory = torch.cat([
-                            interpolate_trajectory(trajectory[i].unsqueeze(0), target_frames=49, mode="linear")
-                            for i in range(trajectory.shape[0])
-                        ], dim=0)
-
-                        scaling_factor_x = stride 
-                        scaling_factor_y = stride
-
-                        trajectory[..., 0] *= scaling_factor_x  # X축 스케일링
-                        trajectory[..., 1] *= scaling_factor_y  # Y축 스케일링
-
-                        if head_pck_evaluator is not None:
-                            for head_idx in range(trajectory.shape[0]):
-                                head_pck_evaluator.update(pred_tracks=trajectory[head_idx].unsqueeze(0), layer=head_idx, timestep_idx=i)
+                
 
                 for l, blk in enumerate(self.transformer.transformer_blocks):
                     if params['attn_weight']:
@@ -956,22 +845,26 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
                         del blk.attn1.processor.attn_weight
                     
                     if params['trajectory']:
-                        trajectory = blk.attn1.processor.trajectory_qk
-                        if qk_pck_evaluator is not None:
-                            qk_pck_evaluator.update(pred_tracks=trajectory.cpu(), layer=l, timestep_idx=i)
-
                         if vis_timesteps[0] == i and vis_layers[0] == l:
+                            trajectory = blk.attn1.processor.trajectory_qk
                             vis_trajectory = trajectory
 
-                        trajectory = blk.attn1.processor.trajectory_feat
+                        if qk_pck_evaluator is not None:
+                            trajectory = blk.attn1.processor.trajectory_qk
+                            qk_pck_evaluator.update(pred_tracks=trajectory, layer=l, timestep_idx=i)
+                            del blk.attn1.processor.trajectory_qk
+
                         if feat_pck_evaluator is not None:
-                            feat_pck_evaluator.update(pred_tracks=trajectory.cpu(), layer=l, timestep_idx=i)
-                        
-                        del blk.attn1.processor.trajectory_qk
-                        del blk.attn1.processor.trajectory_feat
-                    if params['query_key']:
-                        del blk.attn1.processor.query
-                        del blk.attn1.processor.key
+                            trajectory = blk.attn1.processor.trajectory_feat
+                            feat_pck_evaluator.update(pred_tracks=trajectory, layer=l, timestep_idx=i)
+                            del blk.attn1.processor.trajectory_feat
+
+                        if head_pck_evaluator is not None and l == params['head_matching_layer']:
+                            trajectory = blk.attn1.processor.trajectory_head
+                            head_num = trajectory.shape[0]
+                            for head_idx in range(head_num):
+                                head_pck_evaluator.update(pred_tracks=trajectory[head_idx:head_idx+1], layer=head_idx, timestep_idx=i)
+                            del blk.attn1.processor.trajectory_head
 
     
                 attn_query_keys = []

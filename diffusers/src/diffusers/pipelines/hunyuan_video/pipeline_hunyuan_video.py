@@ -499,7 +499,9 @@ class HunyuanVideoPipeline(DiffusionPipeline, HunyuanVideoLoraLoaderMixin):
         prompt_template: Dict[str, Any] = DEFAULT_PROMPT_TEMPLATE,
         max_sequence_length: int = 256,
         affinity_score=None,
-        pck_evaluator=None,
+        qk_pck_evaluator=None,
+        feat_pck_evaluator=None,
+        head_pck_evaluator=None,
         querykey_visualizer=None,
         vis_timesteps=None,
         vis_layers=None,
@@ -742,27 +744,45 @@ class HunyuanVideoPipeline(DiffusionPipeline, HunyuanVideoLoraLoaderMixin):
                         del blk.attn.processor.attn_weight
                     
                     if params['trajectory']:
-                        trajectory = blk.attn.processor.trajectory
-                        if pck_evaluator is not None:
-                            pck_evaluator.update(pred_tracks=trajectory, layer=l, timestep_idx=i)
+                        if qk_pck_evaluator is not None:
+                            trajectory = blk.attn.processor.trajectory_qk
+                            qk_pck_evaluator.update(pred_tracks=trajectory, layer=l, timestep_idx=i)
+                            del blk.attn.processor.trajectory_qk
                         
                         if vis_timesteps[0] == i and vis_layers[0] == l:
                             vis_trajectory = trajectory
-                        
-                        del blk.attn.processor.trajectory
 
-                if params['query_key'] and querykey_visualizer is not None:
+                        if feat_pck_evaluator is not None:
+                            trajectory = blk.attn.processor.trajectory_feat
+                            feat_pck_evaluator.update(pred_tracks=trajectory, layer=l, timestep_idx=i)
+                            del blk.attn.processor.trajectory_feat
+
+                        if head_pck_evaluator is not None and l == params['head_matching_layer']:
+                            trajectory = blk.attn.processor.trajectory_head
+                            head_num = trajectory.shape[0]
+                            for head_idx in range(head_num):
+                                head_pck_evaluator.update(pred_tracks=trajectory[head_idx:head_idx+1], layer=head_idx, timestep_idx=i)
+                            del blk.attn.processor.trajectory_head
+
+    
+                attn_query_keys = []
+                features = []
+                if querykey_visualizer is not None:
                     if i in vis_timesteps:
-                        queries_, keys_ = [], []
+                        queries_, keys_, feats_ = [], [], []
                         for l in vis_layers:
-                            blk = total_blocks[l]
+                            blk = self.transformer.transformer_blocks[l]
                             Q = blk.attn.processor.query[0]
                             K = blk.attn.processor.key[0]
+                            feat = blk.attn.processor.feature[0]
                             queries_.append(Q)
                             keys_.append(K)
+                            feats_.append(feat)
                             del blk.attn.processor.query
                             del blk.attn.processor.key
+                            del blk.attn.processor.feature
                         attn_query_keys.append([queries_, keys_])
+                        features.append(feats_)
 
                 # compute the previous noisy sample x_t -> x_t-1
                 latents = self.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
@@ -801,6 +821,6 @@ class HunyuanVideoPipeline(DiffusionPipeline, HunyuanVideoLoraLoaderMixin):
         self.maybe_free_model_hooks()
 
         if not return_dict:
-            return (video, attn_query_keys, vis_trajectory)
+            return (video, attn_query_keys, features, vis_trajectory)
 
         return HunyuanVideoPipelineOutput(frames=video)

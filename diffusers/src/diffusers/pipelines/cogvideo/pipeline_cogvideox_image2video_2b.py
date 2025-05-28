@@ -60,7 +60,9 @@ class CogVideoXImageToVideoPipeline2B(CogVideoXPipeline):
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
         max_sequence_length: int = 226,
         affinity_score=None,
-        pck_evaluator=None,
+        qk_pck_evaluator=None,
+        feat_pck_evaluator=None,
+        head_pck_evaluator=None,
         querykey_visualizer=None,
         vis_timesteps=None,
         vis_layers=None,
@@ -207,30 +209,46 @@ class CogVideoXImageToVideoPipeline2B(CogVideoXPipeline):
                         del blk.attn1.processor.attn_weight
                     
                     if params['trajectory']:
-                        trajectory = blk.attn1.processor.trajectory
-                        if pck_evaluator is not None:
-                            pck_evaluator.update(pred_tracks=trajectory, layer=l, timestep_idx=i)
-                        
+                        if qk_pck_evaluator is not None:
+                            trajectory = blk.attn1.processor.trajectory_qk
+                            qk_pck_evaluator.update(pred_tracks=trajectory, layer=l, timestep_idx=i)
+                            del blk.attn1.processor.trajectory_qk
+
+                        if feat_pck_evaluator is not None:
+                            trajectory = blk.attn1.processor.trajectory_feat
+                            feat_pck_evaluator.update(pred_tracks=trajectory, layer=l, timestep_idx=i)
+                            del blk.attn1.processor.trajectory_feat
+
+                        if head_pck_evaluator is not None and l == params['head_matching_layer']:
+                            trajectory = blk.attn1.processor.trajectory_head
+                            head_num = trajectory.shape[0]
+                            for head_idx in range(head_num):
+                                head_pck_evaluator.update(pred_tracks=trajectory[head_idx:head_idx+1], layer=head_idx, timestep_idx=i)
+                            del blk.attn1.processor.trajectory_head
+
                         if vis_timesteps[0] == i and vis_layers[0] == l:
                             vis_trajectory = trajectory
-                        
-                        del blk.attn1.processor.trajectory
 
-                if params['query_key'] and querykey_visualizer is not None:
+    
+                attn_query_keys = []
+                features = []
+                if querykey_visualizer is not None:
                     if i in vis_timesteps:
-                        queries_, keys_ = [], []
+                        queries_, keys_, feats_ = [], [], []
                         for l in vis_layers:
                             blk = self.transformer.transformer_blocks[l]
                             Q = blk.attn1.processor.query[1]
                             K = blk.attn1.processor.key[1]
+                            feat = blk.attn1.processor.feature[1]
                             queries_.append(Q)
                             keys_.append(K)
+                            feats_.append(feat)
                             del blk.attn1.processor.query
                             del blk.attn1.processor.key
+                            del blk.attn1.processor.feature
                         attn_query_keys.append([queries_, keys_])
-                        
-
-                # perform guidance
+                        features.append(feats_)
+                            
                 if use_dynamic_cfg:
                     self._guidance_scale = 1 + guidance_scale * (
                         (1 - math.cos(math.pi * ((num_inference_steps - t.item()) / num_inference_steps) ** 5.0)) / 2
@@ -285,6 +303,6 @@ class CogVideoXImageToVideoPipeline2B(CogVideoXPipeline):
         self.maybe_free_model_hooks()
 
         if not return_dict:
-            return (video, attn_query_keys, vis_trajectory)
+            return (video, attn_query_keys, features, vis_trajectory)
 
         return CogVideoXPipelineOutput(frames=video)

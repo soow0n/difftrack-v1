@@ -363,7 +363,7 @@ class CogVideoXImageToVideoPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin)
                 f"You have passed a list of generators of length {len(generator)}, but requested an effective batch"
                 f" size of {batch_size}. Make sure the batch size matches the length of the generators."
             )
-
+        
         num_frames = (num_frames - 1) // self.vae_scale_factor_temporal + 1
         shape = (
             batch_size,
@@ -627,6 +627,14 @@ class CogVideoXImageToVideoPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin)
         ] = None,
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
         max_sequence_length: int = 226,
+        affinity_score=None,
+        qk_pck_evaluator=None,
+        feat_pck_evaluator=None,
+        head_pck_evaluator=None,
+        querykey_visualizer=None,
+        vis_timesteps=None,
+        vis_layers=None,
+        params=None
     ) -> Union[CogVideoXPipelineOutput, Tuple]:
         """
         Function invoked when calling the pipeline for generation.
@@ -812,7 +820,16 @@ class CogVideoXImageToVideoPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin)
 
         # 8. Denoising loop
         num_warmup_steps = max(len(timesteps) - num_inference_steps * self.scheduler.order, 0)
+        
+        text_len = prompt_embeds.size(1)
+        _, f_num, _, h, w = latents.shape
+        h, w = h//2, w//2
 
+        vis_trajectory = None
+        if affinity_score is not None:
+            affinity_score.reset(text_len=text_len, latent_h=h, latent_w=w, latent_f=f_num)
+
+        attn_query_keys = []
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             # for DPM-solver++
             old_pred_original_sample = None
@@ -839,10 +856,58 @@ class CogVideoXImageToVideoPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin)
                     image_rotary_emb=image_rotary_emb,
                     attention_kwargs=attention_kwargs,
                     return_dict=False,
+                    args=params
                 )[0]
                 noise_pred = noise_pred.float()
 
-                # perform guidance
+
+                for l, blk in enumerate(self.transformer.transformer_blocks):
+                    if params['attn_weight']:
+                        attn_weight = blk.attn1.processor.attn_weight
+                        affinity_score.update(attn_weight=attn_weight, layer=l, timestep_idx=i)
+                        del blk.attn1.processor.attn_weight
+                    
+                    if params['trajectory']:
+                        if qk_pck_evaluator is not None:
+                            trajectory = blk.attn1.processor.trajectory_qk
+                            qk_pck_evaluator.update(pred_tracks=trajectory, layer=l, timestep_idx=i)
+                            del blk.attn1.processor.trajectory_qk
+
+                        if feat_pck_evaluator is not None:
+                            trajectory = blk.attn1.processor.trajectory_feat
+                            feat_pck_evaluator.update(pred_tracks=trajectory, layer=l, timestep_idx=i)
+                            del blk.attn1.processor.trajectory_feat
+
+                        if head_pck_evaluator is not None and l == params['head_matching_layer']:
+                            trajectory = blk.attn1.processor.trajectory_head
+                            head_num = trajectory.shape[0]
+                            for head_idx in range(head_num):
+                                head_pck_evaluator.update(pred_tracks=trajectory[head_idx:head_idx+1], layer=head_idx, timestep_idx=i)
+                            del blk.attn1.processor.trajectory_head
+
+                        if vis_timesteps[0] == i and vis_layers[0] == l:
+                            vis_trajectory = trajectory
+
+    
+                attn_query_keys = []
+                features = []
+                if querykey_visualizer is not None:
+                    if i in vis_timesteps:
+                        queries_, keys_, feats_ = [], [], []
+                        for l in vis_layers:
+                            blk = self.transformer.transformer_blocks[l]
+                            Q = blk.attn1.processor.query[1]
+                            K = blk.attn1.processor.key[1]
+                            feat = blk.attn1.processor.feature[1]
+                            queries_.append(Q)
+                            keys_.append(K)
+                            feats_.append(feat)
+                            del blk.attn1.processor.query
+                            del blk.attn1.processor.key
+                            del blk.attn1.processor.feature
+                        attn_query_keys.append([queries_, keys_])
+                        features.append(feats_)
+                            
                 if use_dynamic_cfg:
                     self._guidance_scale = 1 + guidance_scale * (
                         (1 - math.cos(math.pi * ((num_inference_steps - t.item()) / num_inference_steps) ** 5.0)) / 2
@@ -893,10 +958,16 @@ class CogVideoXImageToVideoPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin)
         else:
             video = latents
 
+        if querykey_visualizer is not None:
+            querykey_visualizer.set_attributes(
+                text_len=text_len, latent_h=h, latent_w=w, latent_f=f_num,
+                timesteps=timesteps, frames=video[0].cpu().float())
+        
+
         # Offload all models
         self.maybe_free_model_hooks()
 
         if not return_dict:
-            return (video,)
+            return (video, attn_query_keys, features, vis_trajectory)
 
         return CogVideoXPipelineOutput(frames=video)
