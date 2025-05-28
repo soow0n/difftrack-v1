@@ -149,6 +149,7 @@ else:
     _import_structure["blip_diffusion"] = ["BlipDiffusionPipeline"]
     _import_structure["cogvideo"] = [
         "CogVideoXPipeline",
+        "CogVideoXPipeline_PAG",
         "CogVideoXImageToVideoPipeline",
         "CogVideoXVideoToVideoPipeline",
         "CogVideoXFunControlPipeline",
@@ -513,6 +514,7 @@ if TYPE_CHECKING or DIFFUSERS_SLOW_IMPORT:
             CogVideoXFunControlPipeline,
             CogVideoXImageToVideoPipeline,
             CogVideoXPipeline,
+            CogVideoXPipeline_PAG,
             CogVideoXVideoToVideoPipeline,
             CogVideoXImageToVideoPipeline2B,
             CogVideoXInversePipeline,

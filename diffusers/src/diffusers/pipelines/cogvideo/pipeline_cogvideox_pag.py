@@ -24,6 +24,7 @@ import torch.nn.functional as F
 from ...callbacks import MultiPipelineCallbacks, PipelineCallback
 from ...loaders import CogVideoXLoraLoaderMixin
 from ...models import AutoencoderKLCogVideoX, CogVideoXTransformer3DModel
+from ..pag.pag_utils import PAGMixin
 from ...models.embeddings import get_3d_rotary_pos_embed
 from ...pipelines.pipeline_utils import DiffusionPipeline
 from ...schedulers import CogVideoXDDIMScheduler, CogVideoXDPMScheduler
@@ -34,6 +35,7 @@ from .pipeline_output import CogVideoXPipelineOutput
 from utils.matching import corr_to_matches, get_points_on_a_grid
 from utils.track_vis import interpolate_trajectory
 from einops import rearrange
+from ...models.attention_processor import PAGCFGJointAttnProcessor2_0_CogVideoX, PAGJointAttnProcessor2_0_CogVideoX
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -152,7 +154,7 @@ def retrieve_latents(
     else:
         raise AttributeError("Could not access latents of provided encoder_output")
 
-class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
+class CogVideoXPipeline_PAG(DiffusionPipeline, CogVideoXLoraLoaderMixin, PAGMixin):
     r"""
     Pipeline for text-to-video generation using CogVideoX.
 
@@ -191,6 +193,7 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
         vae: AutoencoderKLCogVideoX,
         transformer: CogVideoXTransformer3DModel,
         scheduler: Union[CogVideoXDDIMScheduler, CogVideoXDPMScheduler],
+        pag_applied_layers: Union[str, List[str]] = "blocks.1",  # 1st transformer block
     ):
         super().__init__()
 
@@ -208,6 +211,10 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
         )
 
         self.video_processor = VideoProcessor(vae_scale_factor=self.vae_scale_factor_spatial)
+
+        self.set_pag_applied_layers(
+            pag_applied_layers, pag_attn_processors=(PAGCFGJointAttnProcessor2_0_CogVideoX(), PAGJointAttnProcessor2_0_CogVideoX())
+        )
 
     def _get_t5_prompt_embeds(
         self,
@@ -569,6 +576,10 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
     def interrupt(self):
         return self._interrupt
 
+    @property
+    def do_classifier_free_guidance(self):
+        return self._guidance_scale > 1
+
     @torch.no_grad()
     @replace_example_docstring(EXAMPLE_DOC_STRING)
     def __call__(
@@ -596,16 +607,13 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
         ] = None,
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
         max_sequence_length: int = 226,
-        affinity_score=None,
-        qk_pck_evaluator=None,
-        feat_pck_evaluator=None,
-        head_pck_evaluator=None,
-        querykey_visualizer=None,
-        vis_timesteps=None,
-        vis_layers=None,
+        gt_track=None,
+        gt_visibility=None,
+        attn_score_df=None,
+        output_dir=None,
         params=None,
-        video=None,
-        inverse_step=0,
+        pag_scale=3.0,
+        pag_adaptive_scale=0.0,
     ) -> Union[CogVideoXPipelineOutput, Tuple]:
         """
         Function invoked when calling the pipeline for generation.
@@ -706,9 +714,11 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
             prompt_embeds,
             negative_prompt_embeds,
         )
+        self._pag_scale = pag_scale
         self._guidance_scale = guidance_scale
         self._attention_kwargs = attention_kwargs
         self._interrupt = False
+        self._pag_adaptive_scale = pag_adaptive_scale
 
         # 2. Default call parameters
         if prompt is not None and isinstance(prompt, str):
@@ -729,14 +739,21 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
         prompt_embeds, negative_prompt_embeds = self.encode_prompt(
             prompt,
             negative_prompt,
-            do_classifier_free_guidance,
+            # do_classifier_free_guidance,
             num_videos_per_prompt=num_videos_per_prompt,
             prompt_embeds=prompt_embeds,
             negative_prompt_embeds=negative_prompt_embeds,
             max_sequence_length=max_sequence_length,
+            do_classifier_free_guidance=self.do_classifier_free_guidance,
             device=device,
         )
-        if do_classifier_free_guidance:
+        # if do_classifier_free_guidance:
+        #     prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0)
+        if self.do_perturbed_attention_guidance:
+            prompt_embeds = self._prepare_perturbed_attention_guidance(
+                prompt_embeds, negative_prompt_embeds, self.do_classifier_free_guidance
+            )
+        elif self.do_classifier_free_guidance:
             prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0)
 
         # 4. Prepare timesteps
@@ -754,36 +771,23 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
             num_frames += additional_frames * self.vae_scale_factor_temporal
 
         latent_channels = self.transformer.config.in_channels
-        if video is not None:
-            video = self.video_processor.preprocess_video(video, height=height, width=width)
-            video = video.to(device=device, dtype=prompt_embeds.dtype)
-
-            latents = self.prepare_video_latents(
-                batch_size * num_videos_per_prompt,
-                latent_channels,
-                num_frames,
-                height,
-                width,
-                prompt_embeds.dtype,
-                device,
-                generator,
-                latents=None,
-                video=video,
-                frame_as_latent=False,
-                timestep=timesteps[inverse_step],
-                add_noise=True,
-            )
-        else:
-            latents = self.prepare_latents(
-                batch_size * num_videos_per_prompt,
-                latent_channels,
-                num_frames,
-                height,
-                width,
-                prompt_embeds.dtype,
-                device,
-                generator,
-                latents,
+        latents = self.prepare_latents(
+            batch_size * num_videos_per_prompt,
+            latent_channels,
+            num_frames,
+            height,
+            width,
+            prompt_embeds.dtype,
+            device,
+            generator,
+            latents,
+        )
+        
+        if self.do_perturbed_attention_guidance:
+            original_attn_proc = self.transformer.attn_processors
+            self._set_pag_attn_processor(
+                pag_applied_layers=self.pag_applied_layers,
+                do_classifier_free_guidance=self.do_classifier_free_guidance,
             )
 
         # 6. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
@@ -799,15 +803,6 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
         # 8. Denoising loop
         num_warmup_steps = max(len(timesteps) - num_inference_steps * self.scheduler.order, 0)
 
-        text_len = prompt_embeds.size(1)
-        _, f_num, _, h, w = latents.shape
-        h, w = h//2, w//2
-
-        vis_trajectory = None
-        if affinity_score is not None:
-            affinity_score.reset(text_len=text_len, latent_h=h, latent_w=w, latent_f=f_num)
-
-        attn_query_keys = []
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             # for DPM-solver++
             old_pred_original_sample = None
@@ -815,15 +810,13 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
                 if self.interrupt:
                     continue
 
-                if video is not None and i != inverse_step:
-                    continue
-
-                latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
+                # latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
+                latent_model_input = torch.cat([latents] * (prompt_embeds.shape[0] // latents.shape[0]))
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
 
                 # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
                 timestep = t.expand(latent_model_input.shape[0])
-
+                
                 # predict noise model_output
                 noise_pred = self.transformer(
                     hidden_states=latent_model_input,
@@ -836,168 +829,13 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
                 )[0]
                 noise_pred = noise_pred.float()
 
-                # Head
-                if params['debug']:
-                    blk = self.transformer.transformer_blocks[17]
-                    query = blk.attn1.processor.query
-                    key = blk.attn1.processor.key
-
-                    H = 480
-                    W = 720
-                    stride = 16
-                    h = H // stride
-                    w = W // stride
-                    text_seq_length = 226
-                    if params['query_key']:
-                        
-                        f_num = query[:, :, text_seq_length:].shape[2] // (h*w)  # 17550 // (30*45) => 13
-
-                        grid_size = 20 if params['video_mode'] == 'fg' else 10
-
-                        xy = get_points_on_a_grid(grid_size, (H, W), device=query.device) # torch.Size([1, grid*grid, 2]) 첫번째 RGB 프레임에 grid 찍기
-                        
-                        queried_coords = xy / stride # 원본 dimension -> latent dimension에 맞추기 
-                        
-                        
-                        query_frames = rearrange(query[:, :, text_seq_length:][1][None,...], 'b head (f h w) c -> b head f (h w) c', f=f_num, h=h, w=w)
-                        key_frames = rearrange(key[:, :, text_seq_length:][1][None,...], 'b head (f h w) c -> b head f (h w) c', f=f_num, h=h, w=w)
-                        
-                        
-                        B, head_num, frame_len, _, head_dim = query_frames.shape
-                        tracks = []
-                        if params['head']:
-                            tracks.append(queried_coords.expand(head_num, -1, -1).unsqueeze(1))
-                        else:
-                            tracks.append(queried_coords.unsqueeze(0))
-                            
-                        self.queried_coords = queried_coords
-                        
-                        correlation = []
-
-                        for k in range(1, f_num):
-                            attn_tts = torch.einsum("b h i d, b h j d -> b h i j", query_frames[:, :, 0, :, :], key_frames[:, :, k, :, :]) / math.sqrt(head_dim)
-                            attn_stt = torch.einsum("b h i d, b h j d -> b h i j", query_frames[:, :, k, :, :], key_frames[:, :, 0, :, :]) / math.sqrt(head_dim)
-
-                            attn_tts = attn_tts.softmax(dim=-1)
-                            attn_stt = attn_stt.softmax(dim=-1)
-                            
-
-                            if params['head']: 
-                                correlation_from_t_to_s = rearrange(attn_tts, 'b head (h w) c -> b head c h w', h=h, w=w) # head mean
-                                correlation_from_t_to_s_T = rearrange(attn_stt, 'b head c (h w) -> b head c h w', h=h, w=w)
-                                correlation_from_t_to_s = (correlation_from_t_to_s + correlation_from_t_to_s_T) / 2 # torch.Size([1, 1350, 30, 45])
-                                correlation.append(correlation_from_t_to_s)
-                                
-                                track_heads = []
-                                for head in range(attn_tts.shape[1]):
-                                    (x_source, y_source, x_target, y_target, score) = corr_to_matches(correlation_from_t_to_s[:, head].view(1, h, w, h, w).unsqueeze(1), get_maximum=True, do_softmax=True, device=query.device)
-                                    mapping_set = torch.cat((x_source.unsqueeze(-1), y_source.unsqueeze(-1)), dim=-1).view(1, h, w, 2).permute(0, 3, 1, 2)
-
-                                    sampled_queried_coords = queried_coords.clone()
-
-                                    margin = W/(64*stride)
-                                    sampled_queried_coords[:, :, 0] = (sampled_queried_coords[:, :, 0] / (w - margin)) * 2 -1.0
-                                    sampled_queried_coords[:, :, 1] = (sampled_queried_coords[:, :, 1] / (h - margin)) * 2 -1.0
-                                    
-                                    track = F.grid_sample(
-                                        mapping_set.to(query.device), 
-                                        sampled_queried_coords.view(1, grid_size, grid_size, 2).to(query.device), 
-                                        align_corners=True
-                                    )
-
-                                    track = rearrange(track, "b c h w -> b () (h w) c") # torch.Size([1, 1, 25, 2])
-                                    track_heads.append(track)
-                                tracks.append(torch.cat(track_heads, dim=0))  
-                            else:
-                                attn_tts = attn_tts.mean(1)
-                                attn_stt = attn_stt.mean(1)
-                                correlation_from_t_to_s = rearrange(attn_tts, 'b (h w) c -> b c h w', h=h, w=w) # head mean
-                                correlation_from_t_to_s_T = rearrange(attn_stt, 'b c (h w) -> b c h w', h=h, w=w)
-                                correlation_from_t_to_s = (correlation_from_t_to_s + correlation_from_t_to_s_T) / 2 # torch.Size([1, 1350, 30, 45])
-                                correlation.append(correlation_from_t_to_s)
-                                
-
-                                (x_source, y_source, x_target, y_target, score) = corr_to_matches(
-                                    correlation_from_t_to_s.view(1, h, w, h, w).unsqueeze(1), get_maximum=True, do_softmax=True, device=query.device)
-                                mapping_set = torch.cat((x_source.unsqueeze(-1), y_source.unsqueeze(-1)), dim=-1).view(1, h, w, 2).permute(0, 3, 1, 2)
-                                sampled_queried_coords = queried_coords.clone()
-                                margin = 720/(64*16)
-                                sampled_queried_coords[:, :, 0] = (sampled_queried_coords[:, :, 0] / (w - margin)) * 2 -1.0
-                                sampled_queried_coords[:, :, 1] = (sampled_queried_coords[:, :, 1] / (h - margin)) * 2 -1.0
-                                
-                                track = F.grid_sample(
-                                    mapping_set.to(query.device), 
-                                    sampled_queried_coords.view(1, grid_size, grid_size, 2).to(query.device), 
-                                    align_corners=True
-                                )
-                                track = rearrange(track, "b c h w -> b () (h w) c") # torch.Size([1, 1, 25, 2])
-                                tracks.append(track)  
-
-                        trajectory = torch.cat(tracks, dim=1)
-                        trajectory = torch.cat([
-                            interpolate_trajectory(trajectory[i].unsqueeze(0), target_frames=49, mode="linear")
-                            for i in range(trajectory.shape[0])
-                        ], dim=0)
-
-                        scaling_factor_x = stride 
-                        scaling_factor_y = stride
-
-                        trajectory[..., 0] *= scaling_factor_x  # X축 스케일링
-                        trajectory[..., 1] *= scaling_factor_y  # Y축 스케일링
-
-                        if head_pck_evaluator is not None:
-                            for head_idx in range(trajectory.shape[0]):
-                                head_pck_evaluator.update(pred_tracks=trajectory[head_idx].unsqueeze(0), layer=head_idx, timestep_idx=i)
-
-                for l, blk in enumerate(self.transformer.transformer_blocks):
-                    if params['attn_weight']:
-                        attn_weight = blk.attn1.processor.attn_weight
-                        affinity_score.update(attn_weight=attn_weight, layer=l, timestep_idx=i)
-                        del blk.attn1.processor.attn_weight
-                    
-                    if params['trajectory']:
-                        trajectory = blk.attn1.processor.trajectory_qk
-                        if qk_pck_evaluator is not None:
-                            qk_pck_evaluator.update(pred_tracks=trajectory.cpu(), layer=l, timestep_idx=i)
-
-                        if vis_timesteps[0] == i and vis_layers[0] == l:
-                            vis_trajectory = trajectory
-
-                        trajectory = blk.attn1.processor.trajectory_feat
-                        if feat_pck_evaluator is not None:
-                            feat_pck_evaluator.update(pred_tracks=trajectory.cpu(), layer=l, timestep_idx=i)
-                        
-                        del blk.attn1.processor.trajectory_qk
-                        del blk.attn1.processor.trajectory_feat
-                    if params['query_key']:
-                        del blk.attn1.processor.query
-                        del blk.attn1.processor.key
-
-    
-                attn_query_keys = []
-                features = []
-                if querykey_visualizer is not None:
-                    if i in vis_timesteps:
-                        queries_, keys_, feats_ = [], [], []
-                        for l in vis_layers:
-                            blk = self.transformer.transformer_blocks[l]
-                            Q = blk.attn1.processor.query[1]
-                            K = blk.attn1.processor.key[1]
-                            feat = blk.attn1.processor.feature[1]
-                            queries_.append(Q)
-                            keys_.append(K)
-                            feats_.append(feat)
-                            del blk.attn1.processor.query
-                            del blk.attn1.processor.key
-                            del blk.attn1.processor.feature
-                        attn_query_keys.append([queries_, keys_])
-                        features.append(feats_)
-                            
-                if use_dynamic_cfg:
-                    self._guidance_scale = 1 + guidance_scale * (
-                        (1 - math.cos(math.pi * ((num_inference_steps - t.item()) / num_inference_steps) ** 5.0)) / 2
+                # perform guidance
+                if self.do_perturbed_attention_guidance:
+                    noise_pred = self._apply_perturbed_attention_guidance(
+                        noise_pred, self.do_classifier_free_guidance, self.guidance_scale, t
                     )
-                if do_classifier_free_guidance:
+
+                elif self.do_classifier_free_guidance:
                     noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
                     noise_pred = noise_pred_uncond + self.guidance_scale * (noise_pred_text - noise_pred_uncond)
 
@@ -1038,15 +876,12 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
         else:
             video = latents
 
-        if querykey_visualizer is not None:
-            querykey_visualizer.set_attributes(
-                text_len=text_len, latent_h=h, latent_w=w, latent_f=f_num,
-                timesteps=timesteps, frames=video[0].cpu().float())
-
         # Offload all models
         self.maybe_free_model_hooks()
 
-        if not return_dict:
-            return (video, attn_query_keys, features, vis_trajectory)
+        text_len = prompt_embeds.size(1)
+
+        if self.do_perturbed_attention_guidance:
+            self.transformer.set_attn_processor(original_attn_proc)
 
         return CogVideoXPipelineOutput(frames=video)

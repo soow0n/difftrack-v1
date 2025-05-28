@@ -499,7 +499,7 @@ class CogVideoXTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Cac
                     args=args,
                 )
             else:
-                if i in args['save_layer']:
+                if args['save_layer'] and (i in args['save_layer']):
                     args['feature'] = True
                     args['query_key'] = True
                 else:

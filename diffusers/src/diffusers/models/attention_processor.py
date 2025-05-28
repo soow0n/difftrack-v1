@@ -1662,6 +1662,343 @@ class PAGJointAttnProcessor2_0:
         return hidden_states, encoder_hidden_states
 
 
+class PAGCFGJointAttnProcessor2_0_CogVideoX:
+    r"""
+    Processor for implementing scaled dot-product attention for the CogVideoX model. It applies a rotary embedding on
+    query and key vectors, but does not include spatial normalization.
+    """
+
+    def __init__(self):
+        if not hasattr(F, "scaled_dot_product_attention"):
+            raise ImportError("CogVideoXAttnProcessor requires PyTorch 2.0, to use it, please upgrade PyTorch to 2.0.")
+
+    def __call__(
+        self,
+        attn: Attention,
+        hidden_states: torch.Tensor,
+        encoder_hidden_states: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        image_rotary_emb: Optional[torch.Tensor] = None,
+        args=None
+    ) -> torch.Tensor:
+        text_seq_length = encoder_hidden_states.size(1)
+
+        # hidden_states = torch.cat([encoder_hidden_states, hidden_states], dim=1)
+
+        #  Step 1: Chunk input into uncond, org, ptb
+        hidden_states_uncond, hidden_states_org, hidden_states_ptb = hidden_states.chunk(3)
+        encoder_hidden_states_uncond, encoder_hidden_states_org, encoder_hidden_states_ptb = encoder_hidden_states.chunk(3)
+
+        # Step 2: Concatenate uncond + org for joint processing
+        hidden_states_org = torch.cat([hidden_states_uncond, hidden_states_org], dim=0) # torch.Size([2, 17550, 1920])
+        encoder_hidden_states_org = torch.cat([encoder_hidden_states_uncond, encoder_hidden_states_org], dim=0) # torch.Size([2, 226, 1920])
+
+        hidden_states_org = torch.cat([encoder_hidden_states_org, hidden_states_org], dim=1)
+        hidden_states_ptb = torch.cat([encoder_hidden_states_ptb, hidden_states_ptb], dim=1)
+
+        # ============== original_path ==============
+        batch_size, sequence_length, _ = hidden_states_org.shape
+
+        if attention_mask is not None:
+            attention_mask = attn.prepare_attention_mask(attention_mask, sequence_length, batch_size)
+            attention_mask = attention_mask.view(batch_size, attn.heads, -1, attention_mask.shape[-1])
+
+        query_org = attn.to_q(hidden_states_org)
+        key_org = attn.to_k(hidden_states_org)
+        value_org = attn.to_v(hidden_states_org)
+
+        inner_dim = key_org.shape[-1]
+        head_dim = inner_dim // attn.heads
+
+        query_org = query_org.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
+        key_org = key_org.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
+        value_org = value_org.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
+
+        if attn.norm_q is not None:
+            query_org = attn.norm_q(query_org)
+        if attn.norm_k is not None:
+            key_org = attn.norm_k(key_org)
+
+        # Apply RoPE if needed
+        if image_rotary_emb is not None:
+            from .embeddings import apply_rotary_emb
+
+            query_org[:, :, text_seq_length:] = apply_rotary_emb(query_org[:, :, text_seq_length:], image_rotary_emb)
+            if not attn.is_cross_attention:
+                key_org[:, :, text_seq_length:] = apply_rotary_emb(key_org[:, :, text_seq_length:], image_rotary_emb)
+
+        hidden_states_org = F.scaled_dot_product_attention(
+            query_org, key_org, value_org, attn_mask=attention_mask, dropout_p=0.0, is_causal=False
+        )
+
+        hidden_states_org = hidden_states_org.transpose(1, 2).reshape(batch_size, -1, attn.heads * head_dim)
+
+        # linear proj
+        hidden_states_org = attn.to_out[0](hidden_states_org)
+        # dropout
+        hidden_states_org = attn.to_out[1](hidden_states_org)
+
+        encoder_hidden_states_org, hidden_states_org = hidden_states_org.split(
+            [text_seq_length, hidden_states_org.size(1) - text_seq_length], dim=1
+        )
+        # torch.Size([2, 226, 1920]) # torch.Size([2, 17550, 1920])
+
+        # ============== perturbed path ==============
+        batch_size, sequence_length, _ = hidden_states_ptb.shape
+
+        # if attention_mask is not None:
+        #     attention_mask = attn.prepare_attention_mask(attention_mask, sequence_length, batch_size)
+        #     attention_mask = attention_mask.view(batch_size, attn.heads, -1, attention_mask.shape[-1])
+
+        query_ptb = attn.to_q(hidden_states_ptb)
+        key_ptb = attn.to_k(hidden_states_ptb)
+        value_ptb = attn.to_v(hidden_states_ptb)
+
+        inner_dim = key_ptb.shape[-1]
+        head_dim = inner_dim // attn.heads
+
+        query_ptb = query_ptb.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
+        key_ptb = key_ptb.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
+        value_ptb = value_ptb.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
+
+        if attn.norm_q is not None:
+            query_ptb = attn.norm_q(query_ptb)
+        if attn.norm_k is not None:
+            key_ptb = attn.norm_k(key_ptb)
+        
+        seq_len = query_ptb.shape[2] 
+        full_mask = torch.zeros((seq_len, seq_len), device=query_ptb.device, dtype=query_ptb.dtype)
+        full_mask[text_seq_length:, text_seq_length:] = float("-inf")
+            
+        for i in range(0, 13):
+            full_mask[text_seq_length+i*1350:text_seq_length+(i+1)*1350, text_seq_length+i*1350:text_seq_length+(i+1)*1350] = 0.0
+
+        # full_mask[text_seq_length:, text_seq_length:].fill_diagonal_(0) # add bach and num_heads dimension
+
+        # expand the mask to match the attention weights shape
+        full_mask = full_mask.unsqueeze(0).unsqueeze(0) 
+
+        # Apply RoPE if needed
+        if image_rotary_emb is not None:
+            from .embeddings import apply_rotary_emb
+
+            query_ptb[:, :, text_seq_length:] = apply_rotary_emb(query_ptb[:, :, text_seq_length:], image_rotary_emb)
+            if not attn.is_cross_attention:
+                key_ptb[:, :, text_seq_length:] = apply_rotary_emb(key_ptb[:, :, text_seq_length:], image_rotary_emb)
+
+        # hidden_states_ptb = F.scaled_dot_product_attention(
+        #     query_ptb, key_ptb, value_ptb, attn_mask=full_mask, dropout_p=0.0, is_causal=False
+        # )
+        
+        hidden_states_ptb = efficient_scaled_dot_product_attention(
+            query_ptb, key_ptb, value_ptb, attn_mask=full_mask, dropout_p=0.0, is_causal=False
+        )
+
+        hidden_states_ptb = hidden_states_ptb.transpose(1, 2).reshape(batch_size, -1, attn.heads * head_dim)
+
+        # linear proj
+        hidden_states_ptb = attn.to_out[0](hidden_states_ptb)
+        # dropout
+        hidden_states_ptb = attn.to_out[1](hidden_states_ptb)
+
+        encoder_hidden_states_ptb, hidden_states_ptb = hidden_states_ptb.split(
+            [text_seq_length, hidden_states_ptb.size(1) - text_seq_length], dim=1
+        ) # torch.Size([1, 226, 1920]), torch.Size([1, 17324, 1920])
+
+        ######## concat #########
+        hidden_states = torch.cat([hidden_states_org, hidden_states_ptb])
+        encoder_hidden_states = torch.cat([encoder_hidden_states_org, encoder_hidden_states_ptb])
+
+        return hidden_states, encoder_hidden_states
+
+
+# Efficient implementation with memory-efficient chunking
+def efficient_scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.0,
+        is_causal=False, scale=None, enable_gqa=False, chunk_size=128) -> torch.Tensor:
+    
+    L, S = query.size(-2), key.size(-2)
+    scale_factor = 1 / math.sqrt(query.size(-1)) if scale is None else scale
+    attn_bias = torch.zeros(L, S, dtype=query.dtype, device=query.device)
+
+    if is_causal:
+        assert attn_mask is None
+        temp_mask = torch.ones(L, S, dtype=torch.bool, device=query.device).tril(diagonal=0)
+        attn_bias.masked_fill_(~temp_mask, float("-inf"))
+        attn_bias = attn_bias.to(query.dtype)
+
+    if attn_mask is not None:
+        if attn_mask.dtype == torch.bool:
+            attn_bias.masked_fill_(~attn_mask[0, 0], float("-inf"))  # support broadcasted [1, 1, L, S]
+        else:
+            attn_bias = attn_mask[0, 0] + attn_bias  # same here
+    
+    attn_bias = (attn_bias == 0).to(torch.bool)
+
+    if enable_gqa:
+        key = key.repeat_interleave(query.size(-3)//key.size(-3), -3)
+        value = value.repeat_interleave(query.size(-3)//value.size(-3), -3)
+
+    output_chunks = []
+    key_t = key.transpose(-2, -1)
+
+    for start in range(0, L, chunk_size):
+        end = min(start + chunk_size, L)
+        q_chunk = query[..., start:end, :]  # [B, H, chunk, D]
+
+        attn_scores = q_chunk @ key_t * scale_factor  # [B, H, chunk, S]
+
+        bias_chunk = attn_bias[start:end, :].unsqueeze(0).unsqueeze(0)  # [1, 1, chunk, S]
+        # attn_scores += bias_chunk
+
+        attn_weights = torch.softmax(attn_scores, dim=-1)
+        attn_weights = torch.dropout(attn_weights, dropout_p, train=True)
+        attn_weights *= bias_chunk
+
+        out_chunk = attn_weights @ value  # [B, H, chunk, D]
+        output_chunks.append(out_chunk)
+
+    return torch.cat(output_chunks, dim=-2)  # [B, H, L, D]
+    
+class PAGJointAttnProcessor2_0_CogVideoX:
+    r"""
+    Processor for implementing scaled dot-product attention for the CogVideoX model. It applies a rotary embedding on
+    query and key vectors, but does not include spatial normalization.
+    """
+
+    def __init__(self):
+        if not hasattr(F, "scaled_dot_product_attention"):
+            raise ImportError("CogVideoXAttnProcessor requires PyTorch 2.0, to use it, please upgrade PyTorch to 2.0.")
+
+    def __call__(
+        self,
+        attn: Attention,
+        hidden_states: torch.Tensor,
+        encoder_hidden_states: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        image_rotary_emb: Optional[torch.Tensor] = None,
+        args=None
+    ) -> torch.Tensor:
+        text_seq_length = encoder_hidden_states.size(1)
+
+        # hidden_states = torch.cat([encoder_hidden_states, hidden_states], dim=1)
+
+        #  Step 1: Chunk input into uncond, org, ptb
+        hidden_states_uncond, hidden_states_org, hidden_states_ptb = hidden_states.chunk(3)
+        encoder_hidden_states_uncond, encoder_hidden_states_org, encoder_hidden_states_ptb = encoder_hidden_states.chunk(3)
+
+        # Step 2: Concatenate uncond + org for joint processing
+        hidden_states_org = torch.cat([hidden_states_uncond, hidden_states_org], dim=0)
+        encoder_hidden_states_org = torch.cat([encoder_hidden_states_uncond, encoder_hidden_states_org], dim=0)
+
+        hidden_states_org = torch.cat([encoder_hidden_states_org, hidden_states_org], dim=1)
+
+        # ============== original_path ==============
+        batch_size, sequence_length, _ = hidden_states_org.shape
+
+        if attention_mask is not None:
+            attention_mask = attn.prepare_attention_mask(attention_mask, sequence_length, batch_size)
+            attention_mask = attention_mask.view(batch_size, attn.heads, -1, attention_mask.shape[-1])
+
+        query_org = attn.to_q(hidden_states_org)
+        key_org = attn.to_k(hidden_states_org)
+        value_org = attn.to_v(hidden_states_org)
+
+        inner_dim = key_org.shape[-1]
+        head_dim = inner_dim // attn.heads
+
+        query_org = query_org.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
+        key_org = key_org.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
+        value_org = value_org.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
+
+        if attn.norm_q is not None:
+            query_org = attn.norm_q(query_org)
+        if attn.norm_k is not None:
+            key_org = attn.norm_k(key_org)
+
+        # Apply RoPE if needed
+        if image_rotary_emb is not None:
+            from .embeddings import apply_rotary_emb
+
+            query_org[:, :, text_seq_length:] = apply_rotary_emb(query_org[:, :, text_seq_length:], image_rotary_emb)
+            if not attn.is_cross_attention:
+                key_org[:, :, text_seq_length:] = apply_rotary_emb(key_org[:, :, text_seq_length:], image_rotary_emb)
+
+        hidden_states_org = F.scaled_dot_product_attention(
+            query_org, key_org, value_org, attn_mask=attention_mask, dropout_p=0.0, is_causal=False
+        )
+
+        hidden_states_org = hidden_states_org.transpose(1, 2).reshape(batch_size, -1, attn.heads * head_dim)
+
+        # linear proj
+        hidden_states_org = attn.to_out[0](hidden_states_org)
+        # dropout
+        hidden_states_org = attn.to_out[1](hidden_states_org)
+
+        encoder_hidden_states_org, hidden_states_org = hidden_states_org.split(
+            [text_seq_length, hidden_states_org.size(1) - text_seq_length], dim=1
+        )
+
+        # ============== perturbed path ==============
+        batch_size, sequence_length, _ = hidden_states_ptb.shape
+
+        # if attention_mask is not None:
+        #     attention_mask = attn.prepare_attention_mask(attention_mask, sequence_length, batch_size)
+        #     attention_mask = attention_mask.view(batch_size, attn.heads, -1, attention_mask.shape[-1])
+
+        query_ptb = attn.to_q(hidden_states_ptb)
+        key_ptb = attn.to_k(hidden_states_ptb)
+        value_ptb = attn.to_v(hidden_states_ptb)
+
+        inner_dim = key_ptb.shape[-1]
+        head_dim = inner_dim // attn.heads
+
+        query_ptb = query_ptb.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
+        key_ptb = key_ptb.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
+        value_ptb = value_ptb.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
+
+        if attn.norm_q is not None:
+            query_ptb = attn.norm_q(query_ptb)
+        if attn.norm_k is not None:
+            key_ptb = attn.norm_k(key_ptb)
+        
+        seq_len = query_ptb.shape[2] 
+        identity_block_size = seq_len - text_seq_length
+        full_mask = torch.zeros((seq_len, seq_len), device=query_ptb.device, dtype=query_ptb.dtype)
+        full_mask[:identity_block_size, :identity_block_size] = float("-inf")
+        full_mask[:identity_block_size, :identity_block_size].fill_diagonal_(0) # add bach and num_heads dimension
+
+        # expand the mask to match the attention weights shape
+        full_mask = full_mask.unsqueeze(0).unsqueeze(0) 
+
+        # Apply RoPE if needed
+        if image_rotary_emb is not None:
+            from .embeddings import apply_rotary_emb
+
+            query_ptb[:, :, text_seq_length:] = apply_rotary_emb(query_ptb[:, :, text_seq_length:], image_rotary_emb)
+            if not attn.is_cross_attention:
+                key_ptb[:, :, text_seq_length:] = apply_rotary_emb(key_ptb[:, :, text_seq_length:], image_rotary_emb)
+
+        hidden_states_ptb = F.scaled_dot_product_attention(
+            query_ptb, key_ptb, value_ptb, attn_mask=full_mask, dropout_p=0.0, is_causal=False
+        )
+
+        hidden_states_ptb = hidden_states_ptb.transpose(1, 2).reshape(batch_size, -1, attn.heads * head_dim)
+
+        # linear proj
+        hidden_states_ptb = attn.to_out[0](hidden_states_ptb)
+        # dropout
+        hidden_states_ptb = attn.to_out[1](hidden_states_ptb)
+
+        encoder_hidden_states_ptb, hidden_states_ptb = hidden_states_ptb.split(
+            [text_seq_length, hidden_states_ptb.size(1) - text_seq_length], dim=1
+        )
+
+        ######## concat #########
+        hidden_states = torch.cat([hidden_states_org, hidden_states_ptb])
+        encoder_hidden_states = torch.cat([encoder_hidden_states_org, encoder_hidden_states_ptb])
+
+        return hidden_states, encoder_hidden_states
+    
 class PAGCFGJointAttnProcessor2_0:
     """Attention processor used typically in processing the SD3-like self-attention projections."""
 
