@@ -237,49 +237,28 @@ class QueryKeyVisualizer:
             attnmaps_total.append(attn_map_per_layer)
         return attnmaps_total
     
-        
 
-    
     def save_pcas(
         self,
-        attn_query_keys,
-        output_dir,
+        attn_query_keys
     ):
+        q_pca_total, k_pca_total = [], []
         for l, layer in enumerate(self.layers):
-            query_dir = os.path.join(output_dir, f'query')
-            key_dir = os.path.join(output_dir, f'key')
-
-            os.makedirs(query_dir, exist_ok=True)
-            os.makedirs(key_dir, exist_ok=True)
-            
             query_pca_per_layer = []
             key_pca_per_layer = []
-            log_timesteps = []
-
-            queries, keys = attn_query_keys[layer]
             for t, t_idx in enumerate(self.timestep_idxs):
-                
+                queries, keys = attn_query_keys[t]
+
                 if self.model == "hunyuan_t2v":
-                    query_pca_list = self._pca(queries[t][:, :-self.text_len].mean(0))
-                    key_pca_list = self._pca(keys[t][:, :-self.text_len].mean(0))
+                    query_pca_list = self._pca(queries[l][:, :-self.text_len].mean(0))
+                    key_pca_list = self._pca(keys[l][:, :-self.text_len].mean(0))
                 else:
-                    query_pca_list = self._pca(queries[t][:, self.text_len:].mean(0))
-                    key_pca_list = self._pca(keys[t][:, self.text_len:].mean(0))
+                    query_pca_list = self._pca(queries[l][:, self.text_len:].mean(0))
+                    key_pca_list = self._pca(keys[l][:, self.text_len:].mean(0))
                 
                 query_pca_per_layer.append(query_pca_list)
                 key_pca_per_layer.append(key_pca_list)
-                log_timesteps.append(f'timestep{self.timesteps[t_idx].item()}({t_idx})')
-            
-            vis_canvas(
-                query_pca_per_layer, 
-                log_timesteps=log_timesteps, 
-                title=f'Query PCA : Layer {layer}', 
-                output_path=os.path.join(query_dir, f'layer{layer}.png')
-            )
-            vis_canvas(
-                key_pca_per_layer, 
-                log_timesteps=log_timesteps, 
-                title=f'Key PCA : Layer {layer}', 
-                output_path=os.path.join(key_dir, f'layer{layer}.png')
-            )
-        
+            q_pca_total.append(query_pca_per_layer)
+            k_pca_total.append(key_pca_per_layer)
+               
+        return q_pca_total, k_pca_total

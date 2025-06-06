@@ -6,13 +6,23 @@ import os
 import random
 import numpy as np
 
-def load_pipe(device):
-
-    pipe = CogVideoXPipeline_PAG.from_pretrained(
-        "THUDM/CogVideoX-2b",
-        pag_applied_layers=["transformer_blocks.13", "transformer_blocks.17", "transformer_blocks.18"], 
-        torch_dtype=torch.bfloat16
-    ).to(device)
+def load_pipe(model_version, pag_layers, device):
+    if model_version == '5b':
+        pipe = CogVideoXPipeline_PAG.from_pretrained(
+            "THUDM/CogVideoX-5b",
+            pag_applied_layers=[
+                f"transformer_blocks.{layer}" for layer in pag_layers
+            ], 
+            torch_dtype=torch.bfloat16
+        ).to(device)
+    else:
+        pipe = CogVideoXPipeline_PAG.from_pretrained(
+            "THUDM/CogVideoX-2b",
+            pag_applied_layers=[
+                f"transformer_blocks.{layer}" for layer in pag_layers
+            ], 
+            torch_dtype=torch.bfloat16
+        ).to(device)
 
     return pipe
 
@@ -25,22 +35,31 @@ def main(args):
 
     os.makedirs(output_dir, exist_ok=True)
 
-    pipe = load_pipe(device=device)
+    pipe = load_pipe(model_version=args.model_version, pag_layers=args.pag_layers, device=device)
 
     pipe.vae.enable_slicing()
     pipe.vae.enable_tiling()
 
     params = {
-        'trajectory': None,
-        'matching_mode': None,
-        'attn_weight': None,
-        'query_key': None,
-        'feature': None,
-        'video_mode': None,
-        'qk_device': None,
-        'debug': None,
-        'save_layer': None,
-        'save_timestep': None,}
+        'trajectory': False,
+        'attn_weight': False,
+        'query_key': False,
+        'head_matching_layer': -1,
+        'matching_layer': [],
+        'pag_mode': args.pag_mode
+    }
+
+    # params = {
+    #     'trajectory': None,
+    #     'matching_mode': None,
+    #     'attn_weight': None,
+    #     'query_key': None,
+    #     'feature': None,
+    #     'video_mode': None,
+    #     'qk_device': None,
+    #     'debug': None,
+    #     'matching_layer': [],
+    #     'save_timestep': None,}
 
 
     with open(prompt_path, "r") as file:
@@ -61,11 +80,16 @@ def main(args):
         save_dir = os.path.join(output_dir, f'{i:03d}')
         os.makedirs(save_dir, exist_ok=True)
 
+        if i < args.start or i > args.end:
+            continue
+        if os.path.isfile(os.path.join(output_dir, f"{i:03d}.mp4")):
+            continue
+
         prompt = prompt.strip()
 
         with torch.no_grad(): 
             
-            video, _, _, _, _ = pipe(
+            video = pipe(
                 prompt=prompt,
                 height=480,
                 width=720,
@@ -75,10 +99,16 @@ def main(args):
                 generator=generator,
                 output_type="pt",
                 params=params,
-                pag_scale=args.pag_scale
-            )
+                pag_scale=args.pag_scale,
+                guidance_scale=args.cfg_scale
+            ).frames
 
             video_np = video.squeeze(0).to(torch.float32).permute(0, 2, 3, 1).cpu().numpy()
+
+            # from PIL import Image
+            # for f in range(len(video_np)):
+            #     Image.fromarray((video_np[f]*255).astype(np.uint8)).save(os.path.join(save_dir, f"{f:03d}.png"))
+
             export_to_video(video_np, os.path.join(output_dir, f"video_{i}.mp4"), fps=8)
 
 
@@ -88,9 +118,15 @@ if __name__=="__main__":
     parser.add_argument("--txt_path", type=str, required=True)
     parser.add_argument("--output_dir", type=str, required=True)
     parser.add_argument("--device", type=str, default='cuda:0')
+    parser.add_argument("--model_version", type=str, default='2b')
     parser.add_argument("--pag_scale", type=float, default=0.4, help="Scale for PAG attention visualization")
+    parser.add_argument("--cfg_scale", type=float, default=6, help="Scale for CFG attention visualization")
+    parser.add_argument("--pag_layers", type=int, nargs='+')
+    parser.add_argument("--pag_timestep", type=float, default=float('inf'))
+    parser.add_argument("--pag_mode", type=str, default='cag')
+    parser.add_argument("--start", type=int, default=0)
+    parser.add_argument("--end", type=int, default=251)
 
-    
     args = parser.parse_args()
 
 

@@ -104,7 +104,7 @@ class PAGMixin:
             return self.pag_scale
 
     def _apply_perturbed_attention_guidance(
-        self, noise_pred, do_classifier_free_guidance, guidance_scale, t, return_pred_text=False
+        self, noise_pred, do_classifier_free_guidance, guidance_scale, pag_scale, return_pred_text=False
     ):
         r"""
         Apply perturbed attention guidance to the noise prediction.
@@ -120,7 +120,6 @@ class PAGMixin:
             Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]: The updated noise prediction tensor after applying
             perturbed attention guidance and the text noise prediction.
         """
-        pag_scale = self._get_pag_scale(t)
 
         if do_classifier_free_guidance:
             noise_pred_uncond, noise_pred_text, noise_pred_perturb = noise_pred.chunk(3)

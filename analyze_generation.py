@@ -1,6 +1,15 @@
 import argparse
 import torch
-from diffusers import CogVideoXPipeline, CogVideoXImageToVideoPipeline, CogVideoXImageToVideoPipeline2B, HunyuanVideoTransformer3DModel, HunyuanVideoPipeline
+from diffusers import (
+    CogVideoXPipeline, 
+    CogVideoXImageToVideoPipeline, 
+    CogVideoXImageToVideoPipeline2B, 
+    HunyuanVideoTransformer3DModel, 
+    HunyuanVideoPipeline,
+    AutoencoderKLWan,
+    WanPipeline,
+    UniPCMultistepScheduler
+)
 import os
 import glob
 import random
@@ -18,7 +27,14 @@ from PIL import Image
 
 
 def load_pipe(model, device):
-    if model == "cogvideox_t2v_5b":
+    if model == "wan":
+        model_id = "Wan-AI/Wan2.1-T2V-1.3B-Diffusers"
+        vae = AutoencoderKLWan.from_pretrained(model_id, subfolder="vae", torch_dtype=torch.float32)
+        pipe = WanPipeline.from_pretrained(model_id, vae=vae, torch_dtype=torch.bfloat16)
+        flow_shift = 3.0  # 5.0 for 720P, 3.0 for 480P
+        pipe.scheduler = UniPCMultistepScheduler.from_config(pipe.scheduler.config, flow_shift=flow_shift)
+        pipe.to(device)
+    elif model == "cogvideox_t2v_5b":
         pipe = CogVideoXPipeline.from_pretrained(
             "THUDM/CogVideoX-5b",
             torch_dtype=torch.bfloat16
@@ -72,13 +88,15 @@ def main(args):
         'query_key': False,
         'feature': False,
         'head_matching_layer': args.head_matching_layer,
-        'trajectory_head': False,
+        'trajectory_head': False
     }
     os.makedirs(output_dir, exist_ok=True)
 
     pipe = load_pipe(model=args.model, device=device)
-    pipe.vae.enable_slicing()
-    pipe.vae.enable_tiling()
+
+    if args.model != "wan":
+        pipe.vae.enable_slicing()
+        pipe.vae.enable_tiling()
 
 
     with open(prompt_path, "r") as file:
@@ -103,9 +121,7 @@ def main(args):
         generator = torch.manual_seed(seed)
         
         save_dir = os.path.join(output_dir, f'{i:03d}')
-        if os.path.exists(save_dir):
-            continue
-
+        if os.path.isdir(save_dir): continue
         os.makedirs(save_dir, exist_ok=True)
 
         prompt = prompt.strip()
@@ -181,9 +197,9 @@ def main(args):
                 video, attn_query_keys, features, vis_trajectory = pipe(
                     image=image,
                     prompt=prompt,
-                    height=480,
-                    width=720,
-                    num_frames=49,
+                    height=args.height,
+                    width=args.width,
+                    num_frames=args.num_frames,
                     num_inference_steps=args.num_inference_steps,
                     return_dict=False,
                     generator=generator,
@@ -202,9 +218,9 @@ def main(args):
             else:
                 video, attn_query_keys, features, vis_trajectory = pipe(
                     prompt=prompt,
-                    height=480,
-                    width=720,
-                    num_frames=49,
+                    height=args.height,
+                    width=args.width,
+                    num_frames=args.num_frames,
                     num_inference_steps=args.num_inference_steps,
                     return_dict=False,
                     generator=generator,
@@ -235,6 +251,23 @@ def main(args):
             
 
             if querykey_visualizer is not None:
+                q_pca, k_pca = querykey_visualizer.save_pcas(attn_query_keys=attn_query_keys)
+                pca_dir = os.path.join(save_dir, 'pca')
+                q_pca_dir = os.path.join(pca_dir, 'query')
+                k_pca_dir = os.path.join(pca_dir, 'key')
+
+                os.makedirs(q_pca_dir, exist_ok=True)
+                os.makedirs(k_pca_dir, exist_ok=True)
+                for t, timestep in enumerate(args.vis_timesteps):
+                    for l, layer in enumerate(args.vis_layers):
+                        os.makedirs(os.path.join(q_pca_dir, f't{timestep}_l{layer}'), exist_ok=True)
+                        os.makedirs(os.path.join(k_pca_dir, f't{timestep}_l{layer}'), exist_ok=True)
+                        for f in range(13):
+                            Image.fromarray(q_pca[l][t][f]).save(os.path.join(q_pca_dir, f't{timestep}_l{layer}', f'{f}.png'))
+                            Image.fromarray(k_pca[l][t][f]).save(os.path.join(k_pca_dir, f't{timestep}_l{layer}', f'{f}.png'))
+
+
+
                 for pos_h, pos_w in list(product(args.pos_h, args.pos_w)):
                     attention_dir = os.path.join(save_dir, 'attention_map', f'({pos_h},{pos_w})')
                     os.makedirs(attention_dir, exist_ok=True)
@@ -257,6 +290,7 @@ def main(args):
                     qk_attn_dir = os.path.join(attention_dir, 'qk')
                     feat_attn_dir = os.path.join(attention_dir, 'feature')
 
+
                     os.makedirs(qk_attn_dir, exist_ok=True)
                     os.makedirs(feat_attn_dir, exist_ok=True)
                     # breakpoint()
@@ -265,8 +299,8 @@ def main(args):
                             os.makedirs(os.path.join(qk_attn_dir, f't{timestep}_l{layer}'), exist_ok=True)
                             os.makedirs(os.path.join(feat_attn_dir, f't{timestep}_l{layer}'), exist_ok=True)
                             for f in range(13):
-                                Image.fromarray(qk_attns[t][l][f]).save(os.path.join(qk_attn_dir, f't{timestep}_l{layer}', f'{f}.png'))
-                                Image.fromarray(feat_attns[t][l][f]).save(os.path.join(feat_attn_dir, f't{timestep}_l{layer}', f'{f}.png'))
+                                Image.fromarray(qk_attns[l][t][f]).save(os.path.join(qk_attn_dir, f't{timestep}_l{layer}', f'{f}.png'))
+                                Image.fromarray(feat_attns[l][t][f]).save(os.path.join(feat_attn_dir, f't{timestep}_l{layer}', f'{f}.png'))
 
             if args.vis_track:
                 track_dir = os.path.join(save_dir, 'track')
@@ -302,9 +336,14 @@ def main(args):
 
 if __name__=="__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, choices=["cogvideox_t2v_5b", "cogvideox_t2v_2b", "cogvideox_i2v_5b", "cogvideox_i2v_2b", "hunyuan_t2v"], default='cogvideox-t2v')
+    parser.add_argument("--model", type=str, choices=["wan", "cogvideox_t2v_5b", "cogvideox_t2v_2b", "cogvideox_i2v_5b", "cogvideox_i2v_2b", "hunyuan_t2v"], default='cogvideox-t2v')
     parser.add_argument("--video_mode", type=str, choices=["fg", "bg"], default='fg')
     parser.add_argument("--num_inference_steps", type=int, default=50)
+
+    parser.add_argument("--height", type=int, default=480)
+    parser.add_argument("--width", type=int, default=720)
+    parser.add_argument("--num_frames", type=int, default=49)
+
 
     parser.add_argument("--affinity_score", action='store_true')
     parser.add_argument("--pck", action='store_true')
@@ -328,6 +367,7 @@ if __name__=="__main__":
     parser.add_argument("--output_dir", type=str, required=True)
 
     parser.add_argument("--device", type=str, default='cuda:0')
+
 
 
     

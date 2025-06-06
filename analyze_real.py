@@ -45,7 +45,7 @@ def main(args):
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False, num_workers=4, drop_last=False, pin_memory=True)
 
     pipe = CogVideoXPipeline.from_pretrained(
-        "THUDM/CogVideoX-2b",
+        "THUDM/CogVideoX-5b",
         torch_dtype=torch.bfloat16
     ).to(device)
     pipe.vae.enable_slicing()
@@ -61,14 +61,21 @@ def main(args):
         query_points_i = query_points_i[:, first_idx, :].to(device=device)
         gt_trajectory = gt_trajectory[:, :, first_idx, :].to(device=device)
         gt_visibility = gt_visibility[:, :, first_idx].to(device=device)
+
+        if input_video.size(1) < args.video_max_len:
+            continue
+
+        if os.path.isdir(os.path.join(output_dir, f'{j:03d}')):
+            continue
         
         if args.video_max_len != -1 and args.video_max_len < input_video.size(1):
             input_video = input_video[:,:args.video_max_len, ...]
             gt_trajectory = gt_trajectory[:, :args.video_max_len, :, :]
             gt_visibility = gt_visibility[:, :args.video_max_len, :]
         
-        _, _, _, H, W = input_video.shape
+        _, video_len, _, H, W = input_video.shape
         params['query_coords'] = query_points_i[...,1:]
+
 
         seed = 42
         torch.manual_seed(seed)
@@ -95,7 +102,7 @@ def main(args):
 
         
         if args.pck:
-            layer_num = 30
+            layer_num = pipe.transformer.config.num_layers
             gt_tracks = gt_trajectory.clone()
             gt_tracks[..., 0] *= (W / 256)
             gt_tracks[..., 1] *= (H / 256)
@@ -114,7 +121,7 @@ def main(args):
             )
             head_pck_evaluator = PCKEvaluator(
                 timestep_num=args.num_inference_steps,
-                layer_num=30,
+                layer_num=pipe.transformer.config.num_attention_heads,
                 gt_tracks=gt_tracks,
                 gt_visibility=gt_visibility
             )

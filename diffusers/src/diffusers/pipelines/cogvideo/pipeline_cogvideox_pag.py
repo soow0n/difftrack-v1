@@ -262,7 +262,6 @@ class CogVideoXPipeline_PAG(DiffusionPipeline, CogVideoXLoraLoaderMixin, PAGMixi
         self,
         prompt: Union[str, List[str]],
         negative_prompt: Optional[Union[str, List[str]]] = None,
-        do_classifier_free_guidance: bool = True,
         num_videos_per_prompt: int = 1,
         prompt_embeds: Optional[torch.Tensor] = None,
         negative_prompt_embeds: Optional[torch.Tensor] = None,
@@ -313,7 +312,7 @@ class CogVideoXPipeline_PAG(DiffusionPipeline, CogVideoXLoraLoaderMixin, PAGMixi
                 dtype=dtype,
             )
 
-        if do_classifier_free_guidance and negative_prompt_embeds is None:
+        if negative_prompt_embeds is None:
             negative_prompt = negative_prompt or ""
             negative_prompt = batch_size * [negative_prompt] if isinstance(negative_prompt, str) else negative_prompt
 
@@ -614,6 +613,7 @@ class CogVideoXPipeline_PAG(DiffusionPipeline, CogVideoXLoraLoaderMixin, PAGMixi
         params=None,
         pag_scale=3.0,
         pag_adaptive_scale=0.0,
+        guidance_step=float('inf')
     ) -> Union[CogVideoXPipelineOutput, Tuple]:
         """
         Function invoked when calling the pipeline for generation.
@@ -730,30 +730,19 @@ class CogVideoXPipeline_PAG(DiffusionPipeline, CogVideoXLoraLoaderMixin, PAGMixi
 
         device = self._execution_device
 
-        # here `guidance_scale` is defined analog to the guidance weight `w` of equation (2)
-        # of the Imagen paper: https://arxiv.org/pdf/2205.11487.pdf . `guidance_scale = 1`
-        # corresponds to doing no classifier free guidance.
-        do_classifier_free_guidance = guidance_scale > 1.0
-
         # 3. Encode input prompt
         prompt_embeds, negative_prompt_embeds = self.encode_prompt(
             prompt,
             negative_prompt,
-            # do_classifier_free_guidance,
             num_videos_per_prompt=num_videos_per_prompt,
             prompt_embeds=prompt_embeds,
             negative_prompt_embeds=negative_prompt_embeds,
             max_sequence_length=max_sequence_length,
-            do_classifier_free_guidance=self.do_classifier_free_guidance,
             device=device,
         )
-        # if do_classifier_free_guidance:
-        #     prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0)
         if self.do_perturbed_attention_guidance:
-            prompt_embeds = self._prepare_perturbed_attention_guidance(
-                prompt_embeds, negative_prompt_embeds, self.do_classifier_free_guidance
-            )
-        elif self.do_classifier_free_guidance:
+            prompt_embeds = torch.cat([prompt_embeds] * 2, dim=0)
+        if self.do_classifier_free_guidance:
             prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0)
 
         # 4. Prepare timesteps
@@ -830,11 +819,14 @@ class CogVideoXPipeline_PAG(DiffusionPipeline, CogVideoXLoraLoaderMixin, PAGMixi
                 noise_pred = noise_pred.float()
 
                 # perform guidance
-                if self.do_perturbed_attention_guidance:
+                if self.do_perturbed_attention_guidance and i <= guidance_step:
                     noise_pred = self._apply_perturbed_attention_guidance(
-                        noise_pred, self.do_classifier_free_guidance, self.guidance_scale, t
+                        noise_pred, self.do_classifier_free_guidance, self.guidance_scale, self._get_pag_scale(t)
                     )
-
+                elif i > guidance_step:
+                    noise_pred = self._apply_perturbed_attention_guidance(
+                        noise_pred, self.do_classifier_free_guidance, self.guidance_scale, 0
+                    )
                 elif self.do_classifier_free_guidance:
                     noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
                     noise_pred = noise_pred_uncond + self.guidance_scale * (noise_pred_text - noise_pred_uncond)

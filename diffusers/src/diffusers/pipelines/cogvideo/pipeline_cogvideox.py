@@ -808,6 +808,7 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
             affinity_score.reset(text_len=text_len, latent_h=h, latent_w=w, latent_f=f_num)
 
         attn_query_keys = []
+        features = []
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             # for DPM-solver++
             old_pred_original_sample = None
@@ -867,8 +868,6 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
                             del blk.attn1.processor.trajectory_head
 
     
-                attn_query_keys = []
-                features = []
                 if querykey_visualizer is not None:
                     if i in vis_timesteps:
                         queries_, keys_, feats_ = [], [], []
