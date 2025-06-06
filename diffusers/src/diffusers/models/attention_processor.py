@@ -1769,11 +1769,11 @@ class PAGCFGJointAttnProcessor2_0_CogVideoX:
         seq_len = query_ptb.shape[2] 
         full_mask = torch.zeros((seq_len, seq_len), device=query_ptb.device, dtype=query_ptb.dtype)
         full_mask[text_seq_length:, text_seq_length:] = float("-inf")
+        full_mask[text_seq_length:, text_seq_length:].fill_diagonal_(0)
             
-        for i in range(0, 13):
-            full_mask[text_seq_length+i*1350:text_seq_length+(i+1)*1350, text_seq_length+i*1350:text_seq_length+(i+1)*1350] = 0.0
-
-        # full_mask[text_seq_length:, text_seq_length:].fill_diagonal_(0) # add bach and num_heads dimension
+        if args['pag_mode'] == "cag":
+            for i in range(0, 13):
+                full_mask[text_seq_length+i*1350:text_seq_length+(i+1)*1350, text_seq_length+i*1350:text_seq_length+(i+1)*1350] = 0.0
 
         # expand the mask to match the attention weights shape
         full_mask = full_mask.unsqueeze(0).unsqueeze(0) 
@@ -1883,14 +1883,16 @@ class PAGJointAttnProcessor2_0_CogVideoX:
         # hidden_states = torch.cat([encoder_hidden_states, hidden_states], dim=1)
 
         #  Step 1: Chunk input into uncond, org, ptb
-        hidden_states_uncond, hidden_states_org, hidden_states_ptb = hidden_states.chunk(3)
-        encoder_hidden_states_uncond, encoder_hidden_states_org, encoder_hidden_states_ptb = encoder_hidden_states.chunk(3)
+        hidden_states_org, hidden_states_ptb = hidden_states.chunk(2)
+        encoder_hidden_states_org, encoder_hidden_states_ptb = encoder_hidden_states.chunk(2)
 
         # Step 2: Concatenate uncond + org for joint processing
-        hidden_states_org = torch.cat([hidden_states_uncond, hidden_states_org], dim=0)
-        encoder_hidden_states_org = torch.cat([encoder_hidden_states_uncond, encoder_hidden_states_org], dim=0)
+        # hidden_states_org = torch.cat([hidden_states_uncond, hidden_states_org], dim=0)
+        # encoder_hidden_states_org = torch.cat([encoder_hidden_states_uncond, encoder_hidden_states_org], dim=0)
 
         hidden_states_org = torch.cat([encoder_hidden_states_org, hidden_states_org], dim=1)
+        hidden_states_ptb = torch.cat([encoder_hidden_states_ptb, hidden_states_ptb], dim=1)
+
 
         # ============== original_path ==============
         batch_size, sequence_length, _ = hidden_states_org.shape
@@ -1960,12 +1962,15 @@ class PAGJointAttnProcessor2_0_CogVideoX:
             query_ptb = attn.norm_q(query_ptb)
         if attn.norm_k is not None:
             key_ptb = attn.norm_k(key_ptb)
-        
+
         seq_len = query_ptb.shape[2] 
-        identity_block_size = seq_len - text_seq_length
         full_mask = torch.zeros((seq_len, seq_len), device=query_ptb.device, dtype=query_ptb.dtype)
-        full_mask[:identity_block_size, :identity_block_size] = float("-inf")
-        full_mask[:identity_block_size, :identity_block_size].fill_diagonal_(0) # add bach and num_heads dimension
+        full_mask[text_seq_length:, text_seq_length:] = float("-inf")
+        full_mask[text_seq_length:, text_seq_length:].fill_diagonal_(0)
+            
+        if args['pag_mode'] == "cag":
+            for i in range(0, 13):
+                full_mask[text_seq_length+i*1350:text_seq_length+(i+1)*1350, text_seq_length+i*1350:text_seq_length+(i+1)*1350] = 0.0
 
         # expand the mask to match the attention weights shape
         full_mask = full_mask.unsqueeze(0).unsqueeze(0) 

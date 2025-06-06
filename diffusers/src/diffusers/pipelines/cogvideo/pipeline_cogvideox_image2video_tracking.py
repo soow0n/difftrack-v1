@@ -853,6 +853,7 @@ class CogVideoXImageToVideoTrackPipeline(DiffusionPipeline, CogVideoXLoraLoaderM
             timestep=timesteps[inverse_step],
             add_noise=add_noise,
         )
+        video_latents = latents.clone()
 
         # 6. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
@@ -886,7 +887,7 @@ class CogVideoXImageToVideoTrackPipeline(DiffusionPipeline, CogVideoXLoraLoaderM
                 latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
 
-                latent_image_input = torch.cat([image_latents] * 2) if do_classifier_free_guidance else image_latents
+                latent_image_input = torch.cat([video_latents] * 2) if do_classifier_free_guidance else image_latents
                 latent_model_input = torch.cat([latent_model_input, latent_image_input], dim=2)
 
                 # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
@@ -916,7 +917,7 @@ class CogVideoXImageToVideoTrackPipeline(DiffusionPipeline, CogVideoXLoraLoaderM
                             del blk.attn1.processor.query
                             del blk.attn1.processor.key
 
-
+                    # breakpoint()
                 if use_dynamic_cfg:
                     self._guidance_scale = 1 + guidance_scale * (
                         (1 - math.cos(math.pi * ((num_inference_steps - t.item()) / num_inference_steps) ** 5.0)) / 2

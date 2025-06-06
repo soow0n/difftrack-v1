@@ -2,8 +2,17 @@
 
 
 import torch
-from diffusers import CogVideoXTrackPipeline, CogVideoXImageToVideoTrackPipeline, CogVideoXImageToVideoTrackPipeline2B, CogVideoXInversePipeline, HunyuanVideoTransformer3DModel, HunyuanVideoTrackPipeline
-from diffusers.schedulers import CogVideoXDDIMScheduler
+from diffusers import (
+    CogVideoXTrackPipeline, 
+    CogVideoXImageToVideoTrackPipeline, 
+    CogVideoXImageToVideoTrackPipeline2B, 
+    CogVideoXInversePipeline, 
+    HunyuanVideoTransformer3DModel, 
+    HunyuanVideoTrackPipeline,
+    AutoencoderKLWan,
+    WanTrackPipeline,
+)
+from diffusers.schedulers import CogVideoXDDIMScheduler, UniPCMultistepScheduler
 import os
 import random
 import numpy as np
@@ -29,6 +38,7 @@ INFERENCE_STEP = {
     'cogvideox_i2v_5b': 50,
     'cogvideox_t2v_2b': 50,
     'cogvideox_i2v_2b': 50,
+    'wan': 50,
     'hunyuan_t2v': 30
 }
 
@@ -37,6 +47,7 @@ TOTAL_LAYER_NUM = {
     'cogvideox_i2v_5b': 30,
     'cogvideox_t2v_2b': 30,
     'cogvideox_i2v_2b': 30,
+    'wan': 30,
     'hunyuan_t2v': 60
 }
 
@@ -51,7 +62,8 @@ def process_chunk(
     inverse_step,
     add_noise=False,
     inversion_pipe=None,
-    model_name="cogvideox_t2v"
+    model_name="cogvideox_t2v",
+    prompt=""
 ):
 
     chunk_video = torch.cat([first_frame, chunk_video], dim=1) / 255.
@@ -81,7 +93,7 @@ def process_chunk(
                 image=to_pil(first_frame[0,0]),
                 height=H,
                 width=W,
-                prompt="",
+                prompt=prompt,
                 guidance_scale=6,
                 num_inference_steps=INFERENCE_STEP[model_name],
                 generator=generator,
@@ -99,7 +111,7 @@ def process_chunk(
             frames, queries, keys, text_seq_length = pipe(
                 height=H,
                 width=W,
-                prompt="",
+                prompt=prompt,
                 guidance_scale=6,
                 num_inference_steps=INFERENCE_STEP[model_name],
                 generator=generator,
@@ -119,16 +131,17 @@ def process_chunk(
     w = W // latent_scaling_size
 
     f_num = queries[0][:, text_seq_length:].shape[1] // (h*w)  # 17550 // (30*45) => 13
-    
+
     queries = torch.cat(queries, dim=-1)
     keys = torch.cat(keys, dim=-1)
-
-    if "cogvideox" in model_name:
-        query_frames = rearrange(queries[:, text_seq_length:][None,...], 'b head (f h w) c -> b head f (h w) c', f=f_num, h=h, w=w)
-        key_frames = rearrange(keys[:, text_seq_length:][None,...], 'b head (f h w) c -> b head f (h w) c', f=f_num, h=h, w=w)
-    elif "hunyuan" in model_name:
+   
+    
+    if "hunyuan" in model_name:
         query_frames = rearrange(queries[:, :-text_seq_length][None,...], 'b head (f h w) c -> b head f (h w) c', f=f_num, h=h, w=w)
         key_frames = rearrange(keys[:, :-text_seq_length][None,...], 'b head (f h w) c -> b head f (h w) c', f=f_num, h=h, w=w)
+    else:
+        query_frames = rearrange(queries[:, text_seq_length:][None,...], 'b head (f h w) c -> b head f (h w) c', f=f_num, h=h, w=w)
+        key_frames = rearrange(keys[:, text_seq_length:][None,...], 'b head (f h w) c -> b head f (h w) c', f=f_num, h=h, w=w)
 
     return query_frames, key_frames
 
@@ -199,7 +212,7 @@ def main(args):
     
     assert inverse_step < INFERENCE_STEP[args.model], f"Inverse step should be smaller than inference step {INFERENCE_STEP[args.model]} for {args.model}"
 
-    output_dir = args.output_dir
+    output_dir = os.path.join(args.output_dir, f'layer{args.matching_layer}_timestep{args.matching_timestep}_noise{args.add_noise}')
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(os.path.join(output_dir, 'gt'), exist_ok=True)
     os.makedirs(os.path.join(output_dir, 'pred'), exist_ok=True)
@@ -264,7 +277,7 @@ def main(args):
         h = H // latent_scaling_size
         w = W // latent_scaling_size
 
-        interval = T // 12 if args.chunk_frame_interval else 1
+        interval = T // (args.chunk_len - 1) if args.chunk_frame_interval else 1
         chunk_start, chunk_end = 1, (args.chunk_len - 2) * interval + 1
 
         visited_idx = set([])
@@ -287,7 +300,8 @@ def main(args):
                 first_frame=video[:,0:1,...],
                 add_noise=args.add_noise,
                 inversion_pipe=inversion_pipe,
-                model_name=args.model
+                model_name=args.model,
+                prompt=""
             )
             
             B, head_dim, qk_len, _, _ = query_frames.shape
@@ -379,7 +393,7 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, choices=["cogvideox_t2v_5b", "cogvideox_t2v_2b", "cogvideox_i2v_5b", "cogvideox_i2v_2b", "hunyuan_t2v"], default='cogvideox_t2v_5b')
+    parser.add_argument("--model", type=str, choices=["wan", "cogvideox_t2v_5b", "cogvideox_t2v_2b", "cogvideox_i2v_5b", "cogvideox_i2v_2b", "hunyuan_t2v"], default='cogvideox_t2v_5b')
     parser.add_argument("--output_dir", type=str, default='./output')
     parser.add_argument('--tapvid_root', type=str)
     parser.add_argument('--eval_dataset', type=str, choices=["davis_first", "kinetics_first"], default="davis_first")

@@ -393,7 +393,6 @@ class CogVideoXTrackPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
     def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
         latents = latents.permute(0, 2, 1, 3, 4)  # [batch_size, num_channels, num_frames, height, width]
         latents = 1 / self.vae_scaling_factor_image * latents
-
         frames = self.vae.decode(latents).sample
         return frames
 
@@ -762,7 +761,7 @@ class CogVideoXTrackPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
             old_pred_original_sample = None
             queries, keys = [], []
             for i, t in enumerate(timesteps):
-                if i < inverse_step or i > max(matching_layer):
+                if i < inverse_step or i > max(matching_timestep):
                     continue
                 if self.interrupt:
                     continue
