@@ -1,4 +1,4 @@
-model=cogvideox_i2v
+model=cogvideox_i2v_2b # cogvideox_i2v_5b
 scene=fg # bg
 python analyze_generation.py \
     --output_dir ./output \

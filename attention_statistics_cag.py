@@ -29,7 +29,6 @@ def load_pipe(model_version, pag_layers, device):
 def main(args):
 
     device = args.device
-
     output_dir = args.output_dir
     prompt_path = args.txt_path 
 
@@ -46,21 +45,7 @@ def main(args):
         'query_key': False,
         'head_matching_layer': -1,
         'matching_layer': [],
-        'pag_mode': args.pag_mode
     }
-
-    # params = {
-    #     'trajectory': None,
-    #     'matching_mode': None,
-    #     'attn_weight': None,
-    #     'query_key': None,
-    #     'feature': None,
-    #     'video_mode': None,
-    #     'qk_device': None,
-    #     'debug': None,
-    #     'matching_layer': [],
-    #     'save_timestep': None,}
-
 
     with open(prompt_path, "r") as file:
         prompts = file.readlines()
@@ -76,14 +61,6 @@ def main(args):
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
         generator = torch.manual_seed(seed)
-        
-        save_dir = os.path.join(output_dir, f'{i:03d}')
-        os.makedirs(save_dir, exist_ok=True)
-
-        if i < args.start or i > args.end:
-            continue
-        if os.path.isfile(os.path.join(output_dir, f"{i:03d}.mp4")):
-            continue
 
         prompt = prompt.strip()
 
@@ -104,11 +81,6 @@ def main(args):
             ).frames
 
             video_np = video.squeeze(0).to(torch.float32).permute(0, 2, 3, 1).cpu().numpy()
-
-            # from PIL import Image
-            # for f in range(len(video_np)):
-            #     Image.fromarray((video_np[f]*255).astype(np.uint8)).save(os.path.join(save_dir, f"{f:03d}.png"))
-
             export_to_video(video_np, os.path.join(output_dir, f"video_{i}.mp4"), fps=8)
 
 
@@ -123,9 +95,6 @@ if __name__=="__main__":
     parser.add_argument("--cfg_scale", type=float, default=6, help="Scale for CFG attention visualization")
     parser.add_argument("--pag_layers", type=int, nargs='+')
     parser.add_argument("--pag_timestep", type=float, default=float('inf'))
-    parser.add_argument("--pag_mode", type=str, default='cag')
-    parser.add_argument("--start", type=int, default=0)
-    parser.add_argument("--end", type=int, default=251)
 
     args = parser.parse_args()
 

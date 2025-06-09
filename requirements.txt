@@ -17,3 +17,5 @@ numpy>=1.26.4
 scikit-learn
 mediapy
 opencv-python
+imageio
+einops

@@ -1771,9 +1771,8 @@ class PAGCFGJointAttnProcessor2_0_CogVideoX:
         full_mask[text_seq_length:, text_seq_length:] = float("-inf")
         full_mask[text_seq_length:, text_seq_length:].fill_diagonal_(0)
             
-        if args['pag_mode'] == "cag":
-            for i in range(0, 13):
-                full_mask[text_seq_length+i*1350:text_seq_length+(i+1)*1350, text_seq_length+i*1350:text_seq_length+(i+1)*1350] = 0.0
+        for i in range(0, 13):
+            full_mask[text_seq_length+i*1350:text_seq_length+(i+1)*1350, text_seq_length+i*1350:text_seq_length+(i+1)*1350] = 0.0
 
         # expand the mask to match the attention weights shape
         full_mask = full_mask.unsqueeze(0).unsqueeze(0) 
@@ -1967,10 +1966,9 @@ class PAGJointAttnProcessor2_0_CogVideoX:
         full_mask = torch.zeros((seq_len, seq_len), device=query_ptb.device, dtype=query_ptb.dtype)
         full_mask[text_seq_length:, text_seq_length:] = float("-inf")
         full_mask[text_seq_length:, text_seq_length:].fill_diagonal_(0)
-            
-        if args['pag_mode'] == "cag":
-            for i in range(0, 13):
-                full_mask[text_seq_length+i*1350:text_seq_length+(i+1)*1350, text_seq_length+i*1350:text_seq_length+(i+1)*1350] = 0.0
+
+        for i in range(0, 13):
+            full_mask[text_seq_length+i*1350:text_seq_length+(i+1)*1350, text_seq_length+i*1350:text_seq_length+(i+1)*1350] = 0.0
 
         # expand the mask to match the attention weights shape
         full_mask = full_mask.unsqueeze(0).unsqueeze(0) 
