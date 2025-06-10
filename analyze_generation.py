@@ -238,13 +238,11 @@ def main(args):
 
                     qk_attns = querykey_visualizer.save_i2i_attn_map(
                         attn_query_keys=attn_query_keys,
-                        output_dir=attention_dir,
                         pos=(pos_h, pos_w),
                         mode='qk'
                     )
                     feat_attns = querykey_visualizer.save_i2i_attn_map(
                         attn_query_keys=features,
-                        output_dir=attention_dir,
                         pos=(pos_h, pos_w),
                         mode='feature'
                     )
