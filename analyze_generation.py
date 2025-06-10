@@ -80,8 +80,6 @@ def main(args):
         'matching_layer': args.vis_layers,
         'query_key': False,
         'feature': False,
-        'head_matching_layer': args.head_matching_layer,
-        'trajectory_head': False
     }
     os.makedirs(output_dir, exist_ok=True)
 
@@ -113,8 +111,8 @@ def main(args):
         os.makedirs(save_dir, exist_ok=True)
 
         prompt = prompt.strip()
-        gt_track = torch.from_numpy(np.load(os.path.join(args.track_path, f'{i:03d}.npy'))).to(args.device)
-        gt_visibility = torch.from_numpy(np.load(os.path.join(args.visibility_path, f'{i:03d}.npy'))).to(args.device)
+        gt_track = torch.from_numpy(np.load(os.path.join(args.track_dir, f'{i:03d}.npy'))).to(args.device)
+        gt_visibility = torch.from_numpy(np.load(os.path.join(args.visibility_dir, f'{i:03d}.npy'))).to(args.device)
 
         layer_num = pipe.transformer.config.num_layers 
         if args.model == 'hunyuan_t2v':
@@ -144,16 +142,9 @@ def main(args):
                 gt_tracks=gt_track,
                 gt_visibility=gt_visibility
             )
-            head_pck_evaluator = PCKEvaluator(
-                timestep_num=args.num_inference_steps,
-                layer_num=pipe.transformer.config.num_attention_heads,
-                gt_tracks=gt_track,
-                gt_visibility=gt_visibility
-            )
         else:
             qk_pck_evaluator = None
             feat_pck_evaluator = None
-            head_pck_evaluator = None
 
 
         if args.vis_attn_map:
@@ -183,7 +174,6 @@ def main(args):
                     affinity_score=affinity_score,
                     qk_pck_evaluator=qk_pck_evaluator,
                     feat_pck_evaluator=feat_pck_evaluator,
-                    head_pck_evaluator=head_pck_evaluator,
                     querykey_visualizer=querykey_visualizer,
                     vis_timesteps=args.vis_timesteps,
                     vis_layers=args.vis_layers,
@@ -202,7 +192,6 @@ def main(args):
                     affinity_score=affinity_score,
                     qk_pck_evaluator=qk_pck_evaluator,
                     feat_pck_evaluator=feat_pck_evaluator,
-                    head_pck_evaluator=head_pck_evaluator,
                     querykey_visualizer=querykey_visualizer,
                     vis_timesteps=args.vis_timesteps,
                     vis_layers=args.vis_layers,
@@ -220,9 +209,6 @@ def main(args):
             if feat_pck_evaluator is not None:
                 feat_pck_evaluator.report(os.path.join(save_dir, 'feat_pck.txt'))
                 print(f"PCK saved at {os.path.join(save_dir, 'feat_pck.txt')}")
-            if head_pck_evaluator is not None:
-                head_pck_evaluator.report(os.path.join(save_dir, 'head_pck.txt'))
-                print(f"PCK saved at {os.path.join(save_dir, 'head_pck.txt')}")
             
 
             if querykey_visualizer is not None:
@@ -294,9 +280,6 @@ def main(args):
     if args.pck:
         pck_mean(file_list=glob.glob(os.path.join(output_dir, '*/qk_pck.txt')), output_path=os.path.join(output_dir, 'total_qk_pck.csv'))
         pck_mean(file_list=glob.glob(os.path.join(output_dir, '*/feat_pck.txt')), output_path=os.path.join(output_dir, 'total_feat_pck.csv'))
-        pck_mean(file_list=glob.glob(os.path.join(output_dir, '*/head_pck.txt')), output_path=os.path.join(output_dir, 'total_head_pck.csv'))
-
-
 
     if args.affinity_score:
         affinity_mean(file_list=glob.glob(os.path.join(output_dir, f'*/affinity_max.xlsx')), output_path=os.path.join(output_dir, f'total_affinity_max.xlsx'))
@@ -332,12 +315,11 @@ if __name__=="__main__":
     parser.add_argument("--pos_w", type=int, nargs='+', default=[16])
 
     parser.add_argument("--vis_track", action='store_true')
-    parser.add_argument("--head_matching_layer", type=int, default=-1)
 
     parser.add_argument("--txt_path", type=str, required=True)
     parser.add_argument("--idx_path", type=str, required=True)
-    parser.add_argument("--track_path", type=str, required=True)
-    parser.add_argument("--visibility_path", type=str, required=True)
+    parser.add_argument("--track_dir", type=str, required=True)
+    parser.add_argument("--visibility_dir", type=str, required=True)
     parser.add_argument("--image_dir", type=str, default='')
     parser.add_argument("--output_dir", type=str, required=True)
 

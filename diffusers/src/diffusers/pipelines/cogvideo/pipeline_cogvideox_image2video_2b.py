@@ -62,7 +62,6 @@ class CogVideoXImageToVideoPipeline2B(CogVideoXPipeline):
         affinity_score=None,
         qk_pck_evaluator=None,
         feat_pck_evaluator=None,
-        head_pck_evaluator=None,
         querykey_visualizer=None,
         vis_timesteps=None,
         vis_layers=None,
@@ -218,13 +217,6 @@ class CogVideoXImageToVideoPipeline2B(CogVideoXPipeline):
                             trajectory = blk.attn1.processor.trajectory_feat
                             feat_pck_evaluator.update(pred_tracks=trajectory, layer=l, timestep_idx=i)
                             del blk.attn1.processor.trajectory_feat
-
-                        if head_pck_evaluator is not None and l == params['head_matching_layer']:
-                            trajectory = blk.attn1.processor.trajectory_head
-                            head_num = trajectory.shape[0]
-                            for head_idx in range(head_num):
-                                head_pck_evaluator.update(pred_tracks=trajectory[head_idx:head_idx+1], layer=head_idx, timestep_idx=i)
-                            del blk.attn1.processor.trajectory_head
 
                         if vis_timesteps[0] == i and vis_layers[0] == l:
                             vis_trajectory = trajectory

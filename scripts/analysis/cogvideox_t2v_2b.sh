@@ -1,4 +1,4 @@
-model=cogvideox_i2v_2b # cogvideox_i2v_5b
+model=cogvideox_t2v_2b
 scene=fg # bg
 python analyze_generation.py \
     --output_dir ./output \
@@ -10,5 +10,4 @@ python analyze_generation.py \
     --idx_path ./dataset/$model/${scene}_50.txt \
     --track_path ./dataset/$model/$scene/tracks \
     --visibility_path ./dataset/$model/$scene/visibility \
-    --image_dir ./dataset/$model/$scene/image \
     --device cuda:0

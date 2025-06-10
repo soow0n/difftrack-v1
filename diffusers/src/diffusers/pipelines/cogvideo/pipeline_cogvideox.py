@@ -599,7 +599,6 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
         affinity_score=None,
         qk_pck_evaluator=None,
         feat_pck_evaluator=None,
-        head_pck_evaluator=None,
         querykey_visualizer=None,
         vis_timesteps=None,
         vis_layers=None,
@@ -859,14 +858,6 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
                             trajectory = blk.attn1.processor.trajectory_feat
                             feat_pck_evaluator.update(pred_tracks=trajectory, layer=l, timestep_idx=i)
                             del blk.attn1.processor.trajectory_feat
-
-                        if head_pck_evaluator is not None and l == params['head_matching_layer']:
-                            trajectory = blk.attn1.processor.trajectory_head
-                            head_num = trajectory.shape[0]
-                            for head_idx in range(head_num):
-                                head_pck_evaluator.update(pred_tracks=trajectory[head_idx:head_idx+1], layer=head_idx, timestep_idx=i)
-                            del blk.attn1.processor.trajectory_head
-
     
                 if querykey_visualizer is not None:
                     if i in vis_timesteps:

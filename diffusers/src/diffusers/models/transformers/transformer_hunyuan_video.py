@@ -227,47 +227,6 @@ class HunyuanVideoAttnProcessor2_0:
             trajectory_feat[..., 1] *= scaling_factor_y  # Y축 스케일링
 
             self.trajectory_feat = trajectory_feat
-
-            if args['trajectory_head']:
-                head_num = query_frames.shape[1]
-
-                tracks_head = []
-                tracks_head.append(queried_coords.expand(head_num, -1, -1).unsqueeze(1))
-                for k in range(1, f_num):
-                    attn_tts = torch.einsum("b h i d, b h j d -> b h i j", query_frames[:, :, 0, :, :], key_frames[:, :, k, :, :]) / math.sqrt(head_dim)
-                    attn_stt = torch.einsum("b h i d, b h j d -> b h i j", query_frames[:, :, k, :, :], key_frames[:, :, 0, :, :]) / math.sqrt(head_dim)
-                    attn_tts = attn_tts.softmax(dim=-1)
-                    attn_stt = attn_stt.softmax(dim=-1)
-
-                    correlation_from_t_to_s = rearrange(attn_tts, 'b head (h w) c -> b head c h w', h=h, w=w)
-                    correlation_from_t_to_s_T = rearrange(attn_stt, 'b head c (h w) -> b head c h w', h=h, w=w)
-                    correlation_from_t_to_s = (correlation_from_t_to_s + correlation_from_t_to_s_T) / 2
-                    
-                    (x_source, y_source, x_target, y_target, score) = corr_to_matches(correlation_from_t_to_s.view(head_num, h, w, h, w).unsqueeze(1), get_maximum=True, do_softmax=True, device=query.device)
-                    mapping_set = torch.cat((x_source.unsqueeze(-1), y_source.unsqueeze(-1)), dim=-1).view(head_num, h, w, 2).permute(0, 3, 1, 2)
-
-                    sampled_queried_coords = queried_coords.clone()
-                    margin = 720/(64*16)
-                    sampled_queried_coords[:, :, 0] = (sampled_queried_coords[:, :, 0] / (w - margin)) * 2 -1.0
-                    sampled_queried_coords[:, :, 1] = (sampled_queried_coords[:, :, 1] / (h - margin)) * 2 -1.0
-                    
-                    B, N = sampled_queried_coords.shape[0], sampled_queried_coords.shape[1]
-                    grid = sampled_queried_coords.view(B, N, 1, 2).expand(head_num, -1, -1, -1).to(query.device)
-                    
-                    track = F.grid_sample(mapping_set.to(query.device), grid=grid, align_corners=True)
-                    track = rearrange(track, "b c h w -> b () (h w) c") # torch.Size([1, 1, 25, 2])
-                    tracks_head.append(track)
-
-                trajectory_head = torch.cat(tracks_head, dim=1)
-                trajectory_head = interpolate_trajectory(trajectory_head, target_frames=49, mode="linear")
-
-                scaling_factor_x = stride 
-                scaling_factor_y = stride
-
-                trajectory_head[..., 0] *= scaling_factor_x  # X축 스케일링
-                trajectory_head[..., 1] *= scaling_factor_y  # Y축 스케일링
-
-                self.trajectory_head = trajectory_head
             
         if args['attn_weight']:
             if args['query_coords'] is None:
@@ -1295,7 +1254,6 @@ class HunyuanVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, 
                 save_descriptor = True if i in args['matching_layer'] else False
                 args['feature'] = save_descriptor
                 args['query_key'] = save_descriptor
-                args['trajectory_head'] = True if i == args['head_matching_layer'] else False
 
                 hidden_states, encoder_hidden_states = block(
                     hidden_states,
@@ -1312,7 +1270,6 @@ class HunyuanVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, 
                 save_descriptor = True if i in args['matching_layer'] else False
                 args['feature'] = save_descriptor
                 args['query_key'] = save_descriptor
-                args['trajectory_head'] = True if i == args['head_matching_layer'] else False
 
                 hidden_states, encoder_hidden_states = block(
                     hidden_states,
