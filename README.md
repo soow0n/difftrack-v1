@@ -43,7 +43,7 @@ pip install -e .
 # 1. Transformer Analysis
 
 ### Analyze Generated Videos
-For more analysis with other model, please refer to `scripts/analysis` directory
+For more analysis with other model, please refer to `scripts/analysis` directory. 
 
 ```bash
 model=cogvideox_t2v_2b
@@ -71,23 +71,8 @@ python analyze_generation.py \
 - `--vis_track`: Visualizes trajectory using query-key descriptors.
 
 
-#### Check Reproduction
-The script above (model: cogvideox_t2v_2b / scene: fg) should reproduce these trajectory videos.
-<p align="center">
-  <figure style="display:inline-block; text-align:center; margin: 0 10px;">
-    <video width="250" controls>
-      <source src="./assets/007.mp4" type="video/mp4">
-    </video>
-    <figcaption><code>output/007/track/video.mp4</code></figcaption>
-  </figure>
-  <figure style="display:inline-block; text-align:center; margin: 0 10px;">
-    <video width="250" controls>
-      <source src="./assets/010.mp4" type="video/mp4">
-    </video>
-    <figcaption><code>output/010/track/video.mp4</code></figcaption>
-  </figure>
-</p>
 
+*This script should reproduce videos in `sample`.*
 
 </br>
 
