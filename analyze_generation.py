@@ -1,40 +1,31 @@
 import argparse
+import os
+import glob
+import random
+import numpy as np
+import cv2
 import torch
+
+from itertools import product
+from PIL import Image
+
 from diffusers import (
     CogVideoXPipeline, 
     CogVideoXImageToVideoPipeline, 
     CogVideoXImageToVideoPipeline2B, 
     HunyuanVideoTransformer3DModel, 
-    HunyuanVideoPipeline,
-    AutoencoderKLWan,
-    WanPipeline,
-    UniPCMultistepScheduler
+    HunyuanVideoPipeline
 )
-import os
-import glob
-import random
-import numpy as np
-from torchvision.transforms import ToPILImage
+
 from utils.affinity_score import AffinityScore
 from utils.evaluation import PCKEvaluator
 from utils.query_key_vis import QueryKeyVisualizer, src_pos_img
 from utils.track_vis import Visualizer
 from utils.aggregate_results import pck_mean, affinity_mean
-from itertools import product
-
-import cv2
-from PIL import Image
 
 
 def load_pipe(model, device):
-    if model == "wan":
-        model_id = "Wan-AI/Wan2.1-T2V-1.3B-Diffusers"
-        vae = AutoencoderKLWan.from_pretrained(model_id, subfolder="vae", torch_dtype=torch.float32)
-        pipe = WanPipeline.from_pretrained(model_id, vae=vae, torch_dtype=torch.bfloat16)
-        flow_shift = 3.0  # 5.0 for 720P, 3.0 for 480P
-        pipe.scheduler = UniPCMultistepScheduler.from_config(pipe.scheduler.config, flow_shift=flow_shift)
-        pipe.to(device)
-    elif model == "cogvideox_t2v_5b":
+    if model == "cogvideox_t2v_5b":
         pipe = CogVideoXPipeline.from_pretrained(
             "THUDM/CogVideoX-5b",
             torch_dtype=torch.bfloat16
@@ -64,8 +55,10 @@ def load_pipe(model, device):
             torch_dtype=torch.float16
         ).to(device)
     else:
-        raise ValueError("Select model in ['cogvideox_t2v', 'cogvideox_i2v', 'hunyuan_t2v']")
+        raise ValueError("Select model in ['cogvideox_t2v_5b', 'cogvideox_t2v_2b', 'cogvideox_i2v_2b', 'cogvideox_i2v_5b', 'hunyuan_t2v']")
 
+    pipe.vae.enable_slicing()
+    pipe.vae.enable_tiling()
 
     return pipe
 
@@ -93,10 +86,6 @@ def main(args):
     os.makedirs(output_dir, exist_ok=True)
 
     pipe = load_pipe(model=args.model, device=device)
-
-    if args.model != "wan":
-        pipe.vae.enable_slicing()
-        pipe.vae.enable_tiling()
 
 
     with open(prompt_path, "r") as file:
@@ -178,6 +167,7 @@ def main(args):
         else:
             querykey_visualizer = None
 
+
         with torch.no_grad(): 
             if "i2v" in args.model:
                 video_path = os.path.join(args.video_dir, f'{i:03d}.mp4')
@@ -251,6 +241,7 @@ def main(args):
             
 
             if querykey_visualizer is not None:
+                # Visualize PCA of query-key
                 q_pca, k_pca = querykey_visualizer.save_pcas(attn_query_keys=attn_query_keys)
                 pca_dir = os.path.join(save_dir, 'pca')
                 q_pca_dir = os.path.join(pca_dir, 'query')
@@ -266,8 +257,7 @@ def main(args):
                             Image.fromarray(q_pca[l][t][f]).save(os.path.join(q_pca_dir, f't{timestep}_l{layer}', f'{f}.png'))
                             Image.fromarray(k_pca[l][t][f]).save(os.path.join(k_pca_dir, f't{timestep}_l{layer}', f'{f}.png'))
 
-
-
+                # Visualize cross attention map (query-key / feature)
                 for pos_h, pos_w in list(product(args.pos_h, args.pos_w)):
                     attention_dir = os.path.join(save_dir, 'attention_map', f'({pos_h},{pos_w})')
                     os.makedirs(attention_dir, exist_ok=True)
@@ -293,7 +283,6 @@ def main(args):
 
                     os.makedirs(qk_attn_dir, exist_ok=True)
                     os.makedirs(feat_attn_dir, exist_ok=True)
-                    # breakpoint()
                     for t, timestep in enumerate(args.vis_timesteps):
                         for l, layer in enumerate(args.vis_layers):
                             os.makedirs(os.path.join(qk_attn_dir, f't{timestep}_l{layer}'), exist_ok=True)
@@ -309,16 +298,12 @@ def main(args):
                 valid_mask = gt_visibility[0,0,:]
                 first_idx = torch.nonzero(valid_mask, as_tuple=True)[0]
                 vis = Visualizer(save_dir=track_dir, pad_value=0, linewidth=3, show_first_frame=1, tracks_leave_trace=15, fps=8)
-                frames = vis.visualize(
+                vis.visualize(
                     video=video * 255, 
                     tracks=vis_trajectory[:, :, first_idx, :],
                     filename="video.mp4", 
                     query_frame=0
                 )
-                
-                # to_pil = ToPILImage()
-                # for f in range(49):
-                #     to_pil(frames[0,f]).save(os.path.join(track_dir, f'{f}.png'))
 
 
     if args.pck:
@@ -336,7 +321,13 @@ def main(args):
 
 if __name__=="__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, choices=["wan", "cogvideox_t2v_5b", "cogvideox_t2v_2b", "cogvideox_i2v_5b", "cogvideox_i2v_2b", "hunyuan_t2v"], default='cogvideox-t2v')
+    parser.add_argument(
+        "--model", 
+        type=str, 
+        choices=[
+            "cogvideox_t2v_5b", "cogvideox_t2v_2b", "cogvideox_i2v_5b", "cogvideox_i2v_2b", "hunyuan_t2v"], 
+        default='cogvideox_t2v_2b'
+    )
     parser.add_argument("--video_mode", type=str, choices=["fg", "bg"], default='fg')
     parser.add_argument("--num_inference_steps", type=int, default=50)
 
@@ -358,7 +349,6 @@ if __name__=="__main__":
     parser.add_argument("--vis_track", action='store_true')
     parser.add_argument("--head_matching_layer", type=int, default=-1)
 
-
     parser.add_argument("--txt_path", type=str, required=True)
     parser.add_argument("--idx_path", type=str, required=True)
     parser.add_argument("--track_path", type=str, required=True)
@@ -367,11 +357,7 @@ if __name__=="__main__":
     parser.add_argument("--output_dir", type=str, required=True)
 
     parser.add_argument("--device", type=str, default='cuda:0')
-
-
-
     
     args = parser.parse_args()
-
 
     main(args)
