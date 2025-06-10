@@ -20,7 +20,7 @@ import torch.nn.functional as F
 from einops import rearrange
 from utils.track_vis import Visualizer
 from utils.evaluation import Evaluator, compute_tapvid_metrics
-from dataset.tapvid import TAPVid
+from utils.tapvid import TAPVid
 from torchvision.transforms import ToPILImage
 import math
 

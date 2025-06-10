@@ -10,7 +10,7 @@ from diffusers import CogVideoXPipeline
 from utils.affinity_score import AffinityScore
 from utils.evaluation import PCKEvaluator
 from utils.aggregate_results import pck_mean, affinity_mean
-from dataset.tapvid import TAPVid
+from utils.tapvid import TAPVid
 
 
 
@@ -192,7 +192,7 @@ if __name__=="__main__":
     parser.add_argument('--resize_h', type=int, default=480)
     parser.add_argument('--resize_w', type=int, default=720)
     parser.add_argument("--video_max_len", type=int, default=49)
-    
+
     args = parser.parse_args()
 
 
