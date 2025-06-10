@@ -11,7 +11,6 @@ from PIL import Image
 from sklearn.decomposition import PCA
 
 
-
 def src_pos_img(image, height, width):
     height_circle = int((height+0.5) / 14. * 224)
     width_circle = int((width+0.5) / 14. * 224)
@@ -24,51 +23,6 @@ def src_pos_img(image, height, width):
     input_image = Image.fromarray((input_image).astype(np.uint8))
 
     return input_image
-
-
-
-def vis_canvas(images, log_timesteps, title, output_path):
-    num_rows = len(images)
-    num_cols = len(images[0])
-    fig, axes = plt.subplots(
-        nrows=num_rows,
-        ncols=num_cols,
-        figsize=(num_cols * 2, num_rows * 2),
-        constrained_layout=True
-    )
-    axes = np.atleast_2d(axes)
-    fig.suptitle(title, fontsize=11)
-    
-    idx = 0
-    for row in range(num_rows):
-        for col in range(num_cols):
-            ax = axes[row, col]
-            ax.imshow(images[row][col], cmap="viridis")
-            idx += 1
-            
-            # Remove ticks and spines
-            ax.set_xticks([])
-            ax.set_yticks([])
-            for spine in ["top", "right", "bottom", "left"]:
-                ax.spines[spine].set_visible(False)
-            
-            # Column labels on the top row
-            if row == 0:
-                ax.set_title(f"frame{col}", fontsize=8, pad=4)
-            
-            # Row labels on the left side of first column
-            if col == 0:
-                # Move text slightly left (negative x) and ensure it won't be clipped
-                ax.text(
-                    -0.1, 0.5,
-                    f"{log_timesteps[row]}",
-                    rotation=90, ha="center", va="center",
-                    transform=ax.transAxes,
-                    fontsize=8,
-                )
-    plt.savefig(output_path)
-    plt.close()
-
 
 
 class QueryKeyVisualizer:
@@ -181,29 +135,21 @@ class QueryKeyVisualizer:
     
 
     def _pca(self, features):
-
-        # features : (Frames * (H W)) * Channel
         combined_features = features.to(torch.float32).cpu().numpy()
-        # numpy to tensor
-        
-        # --- PCA transformation ---
         pca = PCA(n_components=3)
-        combined_features_pca = pca.fit_transform(combined_features)  # shape: [24*1024, 3]
+        combined_features_pca = pca.fit_transform(combined_features)
 
-        # --- Split the PCA results back into individual features ---
         n_features = self.latent_num
         points_per_feature = self.H * self.W
         
-        # List to hold the PCA-transformed images for each feature.
         pca_maps = []
         for i in range(n_features):
             start = i * points_per_feature
             end = (i + 1) * points_per_feature
-            # Get PCA result for this feature, shape: [1024, 3]
+
             feature_pca = combined_features_pca[start:end]
-            # Reshape into an image of shape (32, 32, 3)
             feature_img = feature_pca.reshape(self.H, self.W, 3)
-            # Normalize the image to the 0-255 range for display.
+
             feature_img_norm = (feature_img - feature_img.min()) / (feature_img.max() - feature_img.min())
             feature_img_norm = (feature_img_norm * 255).astype(np.uint8)
             pca_maps.append(feature_img_norm)
@@ -214,7 +160,6 @@ class QueryKeyVisualizer:
     def save_i2i_attn_map(
         self,
         attn_query_keys,
-        output_dir,
         pos,
         mode='qk'
     ):

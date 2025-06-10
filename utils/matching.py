@@ -3,8 +3,6 @@ import torch.nn
 from torch.autograd import Variable
 import numpy as np
 import torch.nn.functional as F
-import math
-from packaging import version
 from typing import Optional, Tuple
 
 def get_points_on_a_grid(
@@ -77,10 +75,9 @@ def corr_to_matches(
     device="cuda:0"
 ):
 
-    device = corr4d.device  # GPU 장치 설정
+    device = corr4d.device
     batch_size, _, fs1, fs2, fs3, fs4 = corr4d.size()
 
-    # 좌표 meshgrid 생성 (GPU에서 직접 연산)
     XA, YA = torch.meshgrid(
         torch.linspace(0, fs2 - 1, fs2 * k_size, device=device),
         torch.linspace(0, fs1 - 1, fs1 * k_size, device=device),
@@ -98,8 +95,6 @@ def corr_to_matches(
     JA, IA = JA.reshape(1, -1), IA.reshape(1, -1)
     JB, IB = JB.reshape(1, -1), IB.reshape(1, -1)
 
-
-    # correlation tensor를 2D로 변환하여 softmax 및 argmax 연산 수행
     if invert_matching_direction:
         nc_A_Bvec = corr4d.view(batch_size, fs1, fs2, fs3 * fs4).to(device)
         if do_softmax:
@@ -116,11 +111,9 @@ def corr_to_matches(
         score = match_B_vals.view(batch_size, -1)
         import pdb; pdb.set_trace()
         iA, jA = IA.view(-1)[idx_B_Avec.view(-1)], JA.view(-1)[idx_B_Avec.view(-1)]
-        # iB, jB = IB.expand_as(iA), JB.expand_as(jA)
         iB, jB = IB.repeat(batch_size, 1), JB.repeat(batch_size, 1)
     
 
-    # 좌표 변환 (정밀도 유지)
     xA = XA[iA.long(), jA.long()].view(batch_size, -1)
     yA = YA[iA.long(), jA.long()].view(batch_size, -1)
     xB = XB[iB.long(), jB.long()].view(batch_size, -1)
