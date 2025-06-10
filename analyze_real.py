@@ -1,23 +1,16 @@
 import argparse
-import torch
-from diffusers import CogVideoXPipeline, CogVideoXImageToVideoPipeline2B, HunyuanVideoTransformer3DModel, HunyuanVideoPipeline
-from diffusers import CogVideoXTrackPipeline, CogVideoXImageToVideoTrackPipeline2B, CogVideoXInversePipeline, HunyuanVideoTransformer3DModel, HunyuanVideoTrackPipeline
-from diffusers.schedulers import CogVideoXDDIMScheduler
 import os
 import glob
 import random
 import numpy as np
-from torchvision.transforms import ToPILImage
+import torch
+
+from diffusers import CogVideoXPipeline
+
 from utils.affinity_score import AffinityScore
 from utils.evaluation import PCKEvaluator
-from utils.query_key_vis import QueryKeyVisualizer, src_pos_img
-from utils.track_vis import Visualizer
 from utils.aggregate_results import pck_mean, affinity_mean
 from dataset.tapvid import TAPVid
-from itertools import product
-
-import cv2
-from PIL import Image
 
 
 
@@ -39,13 +32,12 @@ def main(args):
     }
     os.makedirs(output_dir, exist_ok=True)
 
-
-    # Set up the dataset and evaluator.
     dataset = TAPVid(args)
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False, num_workers=4, drop_last=False, pin_memory=True)
 
+    model_id = "THUDM/CogVideoX-5b" if args.model == "cogvideox_t2v_5b" else "THUDM/CogVideoX-2b"
     pipe = CogVideoXPipeline.from_pretrained(
-        "THUDM/CogVideoX-5b",
+        model_id,
         torch_dtype=torch.bfloat16
     ).to(device)
     pipe.vae.enable_slicing()
@@ -93,7 +85,7 @@ def main(args):
         if args.affinity_score:
             affinity_score = AffinityScore(
                 num_inference_steps=args.num_inference_steps,
-                num_layers=pipe.transformer.config.num_layers, # need debug
+                num_layers=pipe.transformer.config.num_layers,
                 visibility=gt_visibility,
                 model=args.model
             )
@@ -180,7 +172,7 @@ def main(args):
 
 if __name__=="__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, default='cogvideox-t2v')
+    parser.add_argument("--model", type=str, choices=["cogvideox_t2v_5b", "cogvideox_t2v_2b"], default='cogvideox_t2v_2b')
     parser.add_argument("--num_inference_steps", type=int, default=50)
 
     parser.add_argument("--affinity_score", action='store_true')
@@ -195,12 +187,11 @@ if __name__=="__main__":
     parser.add_argument("--device", type=str, default='cuda:0')
 
     parser.add_argument('--tapvid_root', type=str)
-    parser.add_argument('--eval_dataset', type=str, choices=["davis_first", "rgb_stacking_first", "kinetics_first"], default="davis_first")
+    parser.add_argument('--eval_dataset', type=str, choices=["davis_first", "kinetics_first"], default="davis_first")
 
     parser.add_argument('--resize_h', type=int, default=480)
     parser.add_argument('--resize_w', type=int, default=720)
     parser.add_argument("--video_max_len", type=int, default=49)
-
     
     args = parser.parse_args()
 
