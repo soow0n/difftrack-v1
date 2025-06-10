@@ -91,7 +91,7 @@ if __name__=="__main__":
     parser.add_argument("--output_dir", type=str, required=True)
     parser.add_argument("--device", type=str, default='cuda:0')
     parser.add_argument("--model_version", type=str, default='2b')
-    parser.add_argument("--pag_scale", type=float, default=0.4, help="Scale for PAG attention visualization")
+    parser.add_argument("--pag_scale", type=float, default=0.4, help="Scale for CAG attention visualization")
     parser.add_argument("--cfg_scale", type=float, default=6, help="Scale for CFG attention visualization")
     parser.add_argument("--pag_layers", type=int, nargs='+')
     parser.add_argument("--pag_timestep", type=float, default=float('inf'))
