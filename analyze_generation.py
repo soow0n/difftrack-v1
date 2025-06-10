@@ -110,7 +110,6 @@ def main(args):
         generator = torch.manual_seed(seed)
         
         save_dir = os.path.join(output_dir, f'{i:03d}')
-        if os.path.isdir(save_dir): continue
         os.makedirs(save_dir, exist_ok=True)
 
         prompt = prompt.strip()
@@ -170,19 +169,7 @@ def main(args):
 
         with torch.no_grad(): 
             if "i2v" in args.model:
-                video_path = os.path.join(args.video_dir, f'{i:03d}.mp4')
-                cap = cv2.VideoCapture(video_path)
-
-                # Read the first frame
-                success, first_frame = cap.read()
-                if success:
-                    # Convert the frame from BGR (OpenCV default) to RGB
-                    frame_rgb = cv2.cvtColor(first_frame, cv2.COLOR_BGR2RGB)
-                    # Convert the NumPy array (frame) to a PIL Image
-                    image = Image.fromarray(frame_rgb)
-                else:
-                    print("Failed to extract the first frame.")
-                    continue
+                image = Image.open(os.path.join(args.image_dir, f'{i:03d}.png'))
 
                 video, attn_query_keys, features, vis_trajectory = pipe(
                     image=image,
@@ -203,8 +190,6 @@ def main(args):
                     output_type="pt",
                     params=params
                 )
-
-                image.save(os.path.join(save_dir,f'first_frame.png'))
             else:
                 video, attn_query_keys, features, vis_trajectory = pipe(
                     prompt=prompt,
@@ -299,7 +284,7 @@ def main(args):
                 first_idx = torch.nonzero(valid_mask, as_tuple=True)[0]
                 vis = Visualizer(save_dir=track_dir, pad_value=0, linewidth=3, show_first_frame=1, tracks_leave_trace=15, fps=8)
                 vis.visualize(
-                    video=video * 255, 
+                    video=video * 255,
                     tracks=vis_trajectory[:, :, first_idx, :],
                     filename="video.mp4", 
                     query_frame=0
@@ -353,7 +338,7 @@ if __name__=="__main__":
     parser.add_argument("--idx_path", type=str, required=True)
     parser.add_argument("--track_path", type=str, required=True)
     parser.add_argument("--visibility_path", type=str, required=True)
-    parser.add_argument("--video_dir", type=str, default='')
+    parser.add_argument("--image_dir", type=str, default='')
     parser.add_argument("--output_dir", type=str, required=True)
 
     parser.add_argument("--device", type=str, default='cuda:0')
