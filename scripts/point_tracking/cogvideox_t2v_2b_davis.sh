@@ -1,4 +1,4 @@
-model=cogvideox_i2v_2b # cogvideox_i2v_5b
+model=cogvideox_t2v_2b
 python evaluate_tapvid.py \
     --model $model \
     --matching_layer 17 --matching_timestep 49 --inverse_step 49 \
