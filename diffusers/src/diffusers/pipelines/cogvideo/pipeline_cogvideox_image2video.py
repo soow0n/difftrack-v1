@@ -627,9 +627,9 @@ class CogVideoXImageToVideoPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin)
         ] = None,
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
         max_sequence_length: int = 226,
-        affinity_score=None,
-        qk_pck_evaluator=None,
-        feat_pck_evaluator=None,
+        conf_attn_score=None,
+        qk_acc_evaluator=None,
+        feat_acc_evaluator=None,
         querykey_visualizer=None,
         vis_timesteps=None,
         vis_layers=None,
@@ -825,8 +825,8 @@ class CogVideoXImageToVideoPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin)
         h, w = h//2, w//2
 
         vis_trajectory = None
-        if affinity_score is not None:
-            affinity_score.reset(text_len=text_len, latent_h=h, latent_w=w, latent_f=f_num)
+        if conf_attn_score is not None:
+            conf_attn_score.reset(text_len=text_len, latent_h=h, latent_w=w, latent_f=f_num)
 
         attn_query_keys = []
         with self.progress_bar(total=num_inference_steps) as progress_bar:
@@ -863,18 +863,18 @@ class CogVideoXImageToVideoPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin)
                 for l, blk in enumerate(self.transformer.transformer_blocks):
                     if params['attn_weight']:
                         attn_weight = blk.attn1.processor.attn_weight
-                        affinity_score.update(attn_weight=attn_weight, layer=l, timestep_idx=i)
+                        conf_attn_score.update(attn_weight=attn_weight, layer=l, timestep_idx=i)
                         del blk.attn1.processor.attn_weight
                     
                     if params['trajectory']:
-                        if qk_pck_evaluator is not None:
+                        if qk_acc_evaluator is not None:
                             trajectory = blk.attn1.processor.trajectory_qk
-                            qk_pck_evaluator.update(pred_tracks=trajectory, layer=l, timestep_idx=i)
+                            qk_acc_evaluator.update(pred_tracks=trajectory, layer=l, timestep_idx=i)
                             del blk.attn1.processor.trajectory_qk
 
-                        if feat_pck_evaluator is not None:
+                        if feat_acc_evaluator is not None:
                             trajectory = blk.attn1.processor.trajectory_feat
-                            feat_pck_evaluator.update(pred_tracks=trajectory, layer=l, timestep_idx=i)
+                            feat_acc_evaluator.update(pred_tracks=trajectory, layer=l, timestep_idx=i)
                             del blk.attn1.processor.trajectory_feat
 
                         if vis_timesteps[0] == i and vis_layers[0] == l:

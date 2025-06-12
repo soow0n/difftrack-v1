@@ -17,11 +17,11 @@ from diffusers import (
     HunyuanVideoPipeline
 )
 
-from utils.affinity_score import AffinityScore
-from utils.evaluation import PCKEvaluator
+from utils.confidence_attention_score import ConfidenceAttentionScore
+from utils.evaluation import MatchingEvaluator
 from utils.query_key_vis import QueryKeyVisualizer, src_pos_img
 from utils.track_vis import Visualizer
-from utils.aggregate_results import pck_mean, affinity_mean
+from utils.aggregate_results import accuracy_mean, score_mean
 
 
 def load_pipe(model, device):
@@ -74,8 +74,8 @@ def main(args):
     params = {
         'query_coords': None,
         'video_mode': args.video_mode,
-        'trajectory': args.pck or args.vis_track,
-        'attn_weight': args.affinity_score,
+        'trajectory': args.matching_accuracy or args.vis_track,
+        'attn_weight': args.conf_attn_score,
 
         'matching_layer': args.vis_layers,
         'query_key': False,
@@ -93,9 +93,15 @@ def main(args):
         indices = file.readlines()
         selected_indices = sorted([int(index.strip()) for index in indices])
 
+    count = 0
     for i, prompt in enumerate(prompts):
+
+        
         if i not in selected_indices:
             continue
+
+        if count > 1: break
+        count += 1
         
         seed = 42
         torch.manual_seed(seed)
@@ -118,33 +124,33 @@ def main(args):
         if args.model == 'hunyuan_t2v':
             layer_num += pipe.transformer.config.num_single_layers
 
-        if args.affinity_score:
-            affinity_score = AffinityScore(
+        if args.conf_attn_score:
+            conf_attn_score = ConfidenceAttentionScore(
                 num_inference_steps=args.num_inference_steps,
                 num_layers=layer_num,
                 visibility=gt_visibility,
                 model=args.model
             )
         else:
-            affinity_score = None
+            conf_attn_score = None
 
 
-        if args.pck:
-            qk_pck_evaluator = PCKEvaluator(
+        if args.matching_accuracy:
+            qk_acc_evaluator = MatchingEvaluator(
                 timestep_num=args.num_inference_steps,
                 layer_num=layer_num,
                 gt_tracks=gt_track,
                 gt_visibility=gt_visibility
             )
-            feat_pck_evaluator = PCKEvaluator(
+            feat_acc_evaluator = MatchingEvaluator(
                 timestep_num=args.num_inference_steps,
                 layer_num=layer_num,
                 gt_tracks=gt_track,
                 gt_visibility=gt_visibility
             )
         else:
-            qk_pck_evaluator = None
-            feat_pck_evaluator = None
+            qk_acc_evaluator = None
+            feat_acc_evaluator = None
 
 
         if args.vis_attn_map:
@@ -171,9 +177,9 @@ def main(args):
                     num_inference_steps=args.num_inference_steps,
                     return_dict=False,
                     generator=generator,
-                    affinity_score=affinity_score,
-                    qk_pck_evaluator=qk_pck_evaluator,
-                    feat_pck_evaluator=feat_pck_evaluator,
+                    conf_attn_score=conf_attn_score,
+                    qk_acc_evaluator=qk_acc_evaluator,
+                    feat_acc_evaluator=feat_acc_evaluator,
                     querykey_visualizer=querykey_visualizer,
                     vis_timesteps=args.vis_timesteps,
                     vis_layers=args.vis_layers,
@@ -189,9 +195,9 @@ def main(args):
                     num_inference_steps=args.num_inference_steps,
                     return_dict=False,
                     generator=generator,
-                    affinity_score=affinity_score,
-                    qk_pck_evaluator=qk_pck_evaluator,
-                    feat_pck_evaluator=feat_pck_evaluator,
+                    conf_attn_score=conf_attn_score,
+                    qk_acc_evaluator=qk_acc_evaluator,
+                    feat_acc_evaluator=feat_acc_evaluator,
                     querykey_visualizer=querykey_visualizer,
                     vis_timesteps=args.vis_timesteps,
                     vis_layers=args.vis_layers,
@@ -199,16 +205,16 @@ def main(args):
                     params=params
                 )
 
-            if affinity_score is not None:
-                affinity_score.report(save_dir)
+            if conf_attn_score is not None:
+                conf_attn_score.report(save_dir)
                 print(f"Affinity score saved at {save_dir}")
             
-            if qk_pck_evaluator is not None:
-                qk_pck_evaluator.report(os.path.join(save_dir, 'qk_pck.txt'))
-                print(f"PCK saved at {os.path.join(save_dir, 'qk_pck.txt')}")
-            if feat_pck_evaluator is not None:
-                feat_pck_evaluator.report(os.path.join(save_dir, 'feat_pck.txt'))
-                print(f"PCK saved at {os.path.join(save_dir, 'feat_pck.txt')}")
+            if qk_acc_evaluator is not None:
+                qk_acc_evaluator.report(os.path.join(save_dir, 'qk_acc.txt'))
+                print(f"Matching accuracy saved at {os.path.join(save_dir, 'qk_acc.txt')}")
+            if feat_acc_evaluator is not None:
+                feat_acc_evaluator.report(os.path.join(save_dir, 'feat_acc.txt'))
+                print(f"Matching accuracy saved at {os.path.join(save_dir, 'feat_acc.txt')}")
             
 
             if querykey_visualizer is not None:
@@ -275,13 +281,13 @@ def main(args):
                 )
 
 
-    if args.pck:
-        pck_mean(file_list=glob.glob(os.path.join(output_dir, '*/qk_pck.txt')), output_path=os.path.join(output_dir, 'total_qk_pck.csv'))
-        pck_mean(file_list=glob.glob(os.path.join(output_dir, '*/feat_pck.txt')), output_path=os.path.join(output_dir, 'total_feat_pck.csv'))
+    if args.matching_accuracy:
+        accuracy_mean(file_list=glob.glob(os.path.join(output_dir, '*/qk_acc.txt')), output_path=os.path.join(output_dir, 'total_qk_acc.csv'))
+        accuracy_mean(file_list=glob.glob(os.path.join(output_dir, '*/feat_acc.txt')), output_path=os.path.join(output_dir, 'total_feat_acc.csv'))
 
-    if args.affinity_score:
-        affinity_mean(file_list=glob.glob(os.path.join(output_dir, f'*/affinity_max.xlsx')), output_path=os.path.join(output_dir, f'total_affinity_max.xlsx'))
-        affinity_mean(file_list=glob.glob(os.path.join(output_dir, f'*/affinity_sum.xlsx')), output_path=os.path.join(output_dir, f'total_affinity_sum.xlsx'))
+    if args.conf_attn_score:
+        score_mean(file_list=glob.glob(os.path.join(output_dir, f'*/confidence_score.xlsx')), output_path=os.path.join(output_dir, f'total_confidence_score.xlsx'))
+        score_mean(file_list=glob.glob(os.path.join(output_dir, f'*/attention_score.xlsx')), output_path=os.path.join(output_dir, f'total_attention_score.xlsx'))
 
 
 
@@ -302,8 +308,8 @@ if __name__=="__main__":
     parser.add_argument("--num_frames", type=int, default=49)
 
 
-    parser.add_argument("--affinity_score", action='store_true')
-    parser.add_argument("--pck", action='store_true')
+    parser.add_argument("--conf_attn_score", action='store_true')
+    parser.add_argument("--matching_accuracy", action='store_true')
 
     parser.add_argument("--vis_timesteps", nargs='+', type=int, default=[49])
     parser.add_argument("--vis_layers", nargs='+', type=int, default=[17])

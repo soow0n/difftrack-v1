@@ -33,7 +33,7 @@ def style_top_two(s):
                 styled[idx] = ''
     return styled
 
-class AffinityScore():
+class ConfidenceAttentionScore():
     def __init__(
         self,
         model='cogvideox',
@@ -97,10 +97,10 @@ class AffinityScore():
 
     def report(self, log_dir='output'):
         styled_max_df = self.attention_max_df.style.apply(style_top_two, subset=self.columns, axis=0)
-        styled_max_df.to_excel(os.path.join(log_dir, 'affinity_max.xlsx'), engine='openpyxl')
+        styled_max_df.to_excel(os.path.join(log_dir, 'confidence_score.xlsx'), engine='openpyxl')
 
         styled_sum_df = self.attention_sum_df.style.apply(style_top_two, subset=self.columns, axis=0)
-        styled_sum_df.to_excel(os.path.join(log_dir, 'affinity_sum.xlsx'), engine='openpyxl')
+        styled_sum_df.to_excel(os.path.join(log_dir, 'attention_score.xlsx'), engine='openpyxl')
         
         
 

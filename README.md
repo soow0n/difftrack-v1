@@ -1,11 +1,12 @@
 <div align="center">
-<h1>DiffTrack: Emergent Temporal Correspondences from Video Diffusion Transformers</h1>
+<h1>Emergent Temporal Correspondences from Video Diffusion Transformers</h1>
 
-[**Jisu Nam**]()<sup>1*</sup> · [**Soowon Son**]()<sup>1*</sup> · [**Dahyun Chung**]()<sup>2</sup> · [**Jiyoung Kim**]()<sup>1</sup> · [**Siyoon Jin**]()<sup>1</sup> · [**Junhwa Hur**]()<sup>3</sup> · [**Seungryong Kim**]()<sup>1</sup>
+[**Jisu Nam**](https://scholar.google.com/citations?hl=zh-CN&user=xakYe8MAAAAJ)<sup>*1</sup>, [**Soowon Son**](https://scholar.google.com/citations?hl=zh-CN&user=Eo87mRsAAAAJ)<sup>*1</sup>, [**Dahyun Chung**](https://scholar.google.com/citations?hl=ko&user=EU52riMAAAAJ)<sup>2</sup>, [**Jiyoung Kim**](https://scholar.google.co.kr/citations?hl=ko&user=DqG-ybIAAAAJ)<sup>1</sup>, [**Siyoon Jin**](https://scholar.google.com/citations?hl=zh-CN&user=rXRHxkwAAAAJ)<sup>1</sup>, [**Junhwa Hur**](https://scholar.google.com/citations?hl=zh-CN&user=z4dNJdkAAAAJ)<sup>&dagger;3</sup>, [**Seungryong Kim**](https://scholar.google.com/citations?hl=zh-CN&user=cIK1hS8AAAAJ)<sup>&dagger;1</sup>
 
 <sup>1</sup>KAIST AI&emsp;&emsp;&emsp;&emsp;<sup>2</sup>Korea University&emsp;&emsp;&emsp;&emsp;<sup>3</sup>Google DeepMind
 
-<span style="font-size: 1.5em;"><b>CVPR 2025</b></span>
+
+<sup>*</sup> Equal contribution. <sup>&dagger;</sup>Co-corresponding author.
 
 <a href=""><img src='https://img.shields.io/badge/arXiv-DiffTrack-red' alt='Paper PDF'></a>
 <a href='https://cvlab-kaist.github.io/DiffTrack/'><img src='https://img.shields.io/badge/Project_Page-DiffTrack-green' alt='Project Page'></a>
@@ -14,22 +15,26 @@
 
 </div>
 
-***How do VDMs internally establish and represent temporal correspondences across frames?***
+### 🔍 How do Video Diffusion Transformers (Video DiTs) learn and represent temporal correspondences across frames?
 
-To answer this question, DiffTrack constructs:
-- **Dataset of prompt-generated video with pseudo GT tracking annotations**
-- **Novel evaluation metrics for analyzing temporal correspondences**
+To address this fundamental question, we present **DiffTrack** - a unified framework for uncovering and exploiting emergent temporal correspondences in video diffusion models. DiffTrack introduces:
 
-We also applicate DiffTrack to:
-- **Zero-shot point tracking**, where it acheives SOTA performance compared to existing vision foundation and self-supervised video models
-- **Motion-enhanced video generation** with a novel guidance method CAG
+**📽️ Synthetic Video Dataset** enriched with pseudo ground-truth point tracking annotations.
+
+**📊 Novel Evaluation Metrics** specifically designed to quantify cross-frame consistency and attention-based correspondence.
+
+**🚀 Two Practical Applications**
+- **Zero-shot Point Tracking**  achieving state-of-the-art (SOTA) performance.
+- **Motion-Enhanced Video Generation** via a novel Cross-Attention Guidance (CAG) technique.
+
+
 
 
 ## Installation
 
 ```bash
-git clone https://github.com/<your-org>/diff-track.git
-cd diff-track
+git clone https://github.com/cvlab-kaist//DiffTrack.git
+cd DiffTrack
 
 conda create -n diff-track python=3.10 -y
 conda activate diff-track
@@ -40,10 +45,12 @@ pip install -e .
 ```
 </br>
 
-# 1. Transformer Analysis
+# 1. Correspondence Analysis in Video DiTs
 
-### Analyze Generated Videos
-For more analysis with other model, please refer to `scripts/analysis` directory. 
+### Analysis on Generated Videos
+We provide correspondence analysis across several video backbone models: CogVideoX-2B, CogVideoX-5B, HunyuanVideo, CogVideoX-2B-I2V, and CogVideoX-5B-I2V.
+
+Additional analysis scripts are available in the `scripts/analysis` directory. 
 
 ```bash
 model=cogvideox_t2v_2b
@@ -51,7 +58,7 @@ scene=fg
 python analyze_generation.py \
     --output_dir ./output \
     --model $model --video_mode $scene --num_inference_steps 50 \
-    --pck --affinity_score \
+    --matching_accuracy --conf_attn_score \
     --vis_timesteps 49 --vis_layers 17 \
     --vis_attn_map --pos_h 16 24 --pos_w 16 36 --vis_track \
     --txt_path ./dataset/txt_prompts/$scene.txt \
@@ -65,25 +72,27 @@ python analyze_generation.py \
 
 - `--model`: Supported models include `cogvideox_t2v_2b`, `cogvideox_t2v_5b`, `cogvideox_i2v_2b`, `cogvideox_i2v_5b`, `hunyuan_t2v`.
 - `--video_mode`: Set to `fg` for object-centric or `bg` for scenic videos.
-- `--pck`: Computes matching accuracy (PCK) using both query-key and intermediate features.
-- `--affinity_score`: Computes max and sum of cross-frame attention.
+- `--matching_accuracy`: Computes matching accuracy using both query-key and intermediate features.
+- `--conf_attn_score`: Computes confidence score and attention score.
 - `--vis_attn_map`: Aggregates cost maps for attention visualization.
 - `--vis_track`: Visualizes trajectory using query-key descriptors.
 
 
 
-*This script should reproduce videos in `sample`.*
+*This script should reproduce videos in the `sample` directory.*
 
 </br>
 
-### Analyze Real Videos (TAP-Vid)
-*(Implemented only for CogVideoX-2B/5B)*
+### Analysis on Real Videos (TAP-Vid-DAVIS)
+We provide correspondence analysis across several video backbone models: CogVideoX-2B, CogVideoX-5B. 
+
+Additional analysis scripts are available in the `scripts/analysis` directory. 
 
 ```bash
 python analyze_real.py \
     --output_dir ./output \
     --model cogvideox_t2v_2b --num_inference_steps 50 \
-    --pck --affinity_score \
+    --matching_accuracy --confidence_attention_score \
     --resize_h 480 --resize_w 720 \
     --eval_dataset davis_first --tapvid_root /path/to/data \
     --device cuda:0
@@ -93,7 +102,7 @@ python analyze_real.py \
 
 # 2. Zero-Shot Point Tracking
 
-### Download Dataset
+### Download Evaluation Dataset
 
 ```bash
 wget https://storage.googleapis.com/dm-tapnet/tapvid_davis.zip
@@ -104,7 +113,9 @@ For TAP-Vid-Kinetics, please refer to the [TAP-Vid GitHub](https://github.com/go
 
 
 ### Run Evaluation
-For more evalutaion in other model and dataset, please refer to `scripts/point_tracking` directory
+We provide across several video backbone models: CogVideoX-2B, CogVideoX-5B, HunyuanVideo.
+
+Additional evaluation scripts are available in the `scripts/point_tracking` directory.
 
 ```bash
 model=cogvideox_t2v_2b
@@ -134,7 +145,7 @@ python evaluate_tapvid.py \
 #### Dataset Options
 
 - `--tapvid_root`: Path to TAP-Vid dataset.
-- `--eval_dataset`: Choose from `davis_first`, etc.
+- `--eval_dataset`: Choose from `davis_first` and `kinetics_first`
 - `--resize_h` / `--resize_w`: Resize video resolution.
 - `--video_max_len`: Max length of input video.
 - `--do_inversion` / `--add_noise`: Modify inversion strategy.
@@ -150,7 +161,9 @@ python evaluate_tapvid.py \
 
 # 3. Cross Attention Guidance (CAG)
 
-*(Implemented only for CogVideoX-2B/5B)*
+We provide across several video backbone models: CogVideoX-2B, CogVideoX-5B.
+
+Additional motion guidance scripts are available in the `scripts/motion_guidance` directory.
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 python motion_guidance.py \

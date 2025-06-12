@@ -187,7 +187,7 @@ class Evaluator():
 
 
 
-class PCKEvaluator():
+class MatchingEvaluator():
     def __init__(self, timestep_num, layer_num, gt_tracks, gt_visibility):
         self.pck = torch.zeros([layer_num, timestep_num])
         self.gt_tracks = gt_tracks
@@ -205,7 +205,7 @@ class PCKEvaluator():
         self.pck[layer][timestep_idx] = pck
 
     
-    def report(self, log_file='pck.txt'):
+    def report(self, log_file='matching_accuracy.txt'):
         with open(log_file, "w") as f:
             for i, row in enumerate(self.pck):
                 row_str = ", ".join(f"{val:.4f}" for val in row)

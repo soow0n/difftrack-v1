@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 import re
-from utils.affinity_score import style_top_two
+from utils.confidence_attention_score import style_top_two
 
 def parse_instance_values(file_path):
     """
@@ -19,7 +19,7 @@ def parse_instance_values(file_path):
     return np.array(layer_values)  # shape: [num_layers, num_timesteps]
 
 
-def pck_mean(file_list, output_path):
+def accuracy_mean(file_list, output_path):
     """
     Aggregate mean column-wise (frame-wise) values across multiple files.
     """
@@ -33,11 +33,11 @@ def pck_mean(file_list, output_path):
     mean_values = stacked.mean(axis=0)      # shape: [num_layers, num_timesteps]
     np.savetxt(output_path, mean_values, delimiter=",", fmt="%.4f")
 
-    print(f"Averaged pck saved to: {output_path}")
+    print(f"Averaged matching accuracy saved to: {output_path}")
 
 
 
-def affinity_mean(file_list, output_path):
+def score_mean(file_list, output_path):
 
     # Load all files into list of dataframes
     dataframes = []
@@ -81,4 +81,4 @@ def affinity_mean(file_list, output_path):
             styled = styled.apply(style_top_two, subset=[col])
     styled.to_excel(output_path, index=False, header=False)
 
-    print(f"Averaged affinity score saved to: {output_path}")
+    print(f"Averaged score saved to: {output_path}")
