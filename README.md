@@ -38,8 +38,8 @@ To address this fundamental question, we present
 git clone https://github.com/cvlab-kaist//DiffTrack.git
 cd DiffTrack
 
-conda create -n diff-track python=3.10 -y
-conda activate diff-track
+conda create -n difftrack python=3.10 -y
+conda activate difftrack
 pip install -r requirements.txt
 
 cd diffusers
@@ -63,8 +63,7 @@ python analyze_generation.py \
     --matching_accuracy --conf_attn_score \
     --vis_timesteps 49 --vis_layers 17 \
     --vis_attn_map --pos_h 16 24 --pos_w 16 36 --vis_track \
-    --txt_path ./dataset/txt_prompts/$scene.txt \
-    --idx_path ./dataset/$model/${scene}_50.txt \
+    --txt_path ./dataset/$model/$scene/prompt.txt \
     --track_dir ./dataset/$model/$scene/tracks \
     --visibility_dir ./dataset/$model/$scene/visibility \
     --device cuda:0
@@ -171,7 +170,7 @@ Additional motion guidance scripts are available in the `scripts/motion_guidance
 CUDA_VISIBLE_DEVICES=0 python motion_guidance.py \
     --output_dir ./output \
     --model_version 2b \
-    --txt_path ./dataset/txt_prompts/cag_prompts.txt \
+    --txt_path ./dataset/cag_prompts.txt \
     --pag_layers 13 17 21 \
     --pag_scale 1 \ 
     --cfg_scale 6

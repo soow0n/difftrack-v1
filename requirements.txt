@@ -19,3 +19,4 @@ mediapy
 opencv-python
 imageio
 einops
+openpyxl
