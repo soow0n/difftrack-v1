@@ -21,7 +21,8 @@ from utils.confidence_attention_score import ConfidenceAttentionScore
 from utils.evaluation import MatchingEvaluator
 from utils.query_key_vis import QueryKeyVisualizer, src_pos_img
 from utils.track_vis import Visualizer
-from utils.aggregate_results import accuracy_mean, score_mean
+from utils.aggregate_results import save_accuracy_mean, save_score_mean
+from utils.harmonic_mean import save_harmonic_mean
 
 
 def load_pipe(model, device):
@@ -93,15 +94,11 @@ def main(args):
         indices = file.readlines()
         selected_indices = sorted([int(index.strip()) for index in indices])
 
-    count = 0
-    for i, prompt in enumerate(prompts):
 
+    for i, prompt in enumerate(prompts):
         
         if i not in selected_indices:
             continue
-
-        if count > 1: break
-        count += 1
         
         seed = 42
         torch.manual_seed(seed)
@@ -282,13 +279,20 @@ def main(args):
 
 
     if args.matching_accuracy:
-        accuracy_mean(file_list=glob.glob(os.path.join(output_dir, '*/qk_acc.txt')), output_path=os.path.join(output_dir, 'total_qk_acc.csv'))
-        accuracy_mean(file_list=glob.glob(os.path.join(output_dir, '*/feat_acc.txt')), output_path=os.path.join(output_dir, 'total_feat_acc.csv'))
+        save_accuracy_mean(file_list=glob.glob(os.path.join(output_dir, '*/qk_acc.txt')), output_path=os.path.join(output_dir, 'total_qk_acc.csv'))
+        save_accuracy_mean(file_list=glob.glob(os.path.join(output_dir, '*/feat_acc.txt')), output_path=os.path.join(output_dir, 'total_feat_acc.csv'))
 
     if args.conf_attn_score:
-        score_mean(file_list=glob.glob(os.path.join(output_dir, f'*/confidence_score.xlsx')), output_path=os.path.join(output_dir, f'total_confidence_score.xlsx'))
-        score_mean(file_list=glob.glob(os.path.join(output_dir, f'*/attention_score.xlsx')), output_path=os.path.join(output_dir, f'total_attention_score.xlsx'))
+        save_score_mean(file_list=glob.glob(os.path.join(output_dir, '*/confidence_score.xlsx')), output_path=os.path.join(output_dir, 'total_confidence_score.xlsx'))
+        save_score_mean(file_list=glob.glob(os.path.join(output_dir, '*/attention_score.xlsx')), output_path=os.path.join(output_dir, 'total_attention_score.xlsx'))
 
+    if args.matching_accuracy and args.conf_attn_score:
+        save_harmonic_mean(
+            acc_path=os.path.join(output_dir, 'total_qk_acc.csv'), 
+            conf_path=os.path.join(output_dir, 'total_confidence_score.xlsx'),
+            attn_path=os.path.join(output_dir, 'total_attention_score.xlsx'),
+            output_path=os.path.join(output_dir, 'harmonic_mean.csv')
+        )
 
 
 if __name__=="__main__":

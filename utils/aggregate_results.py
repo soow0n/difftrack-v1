@@ -19,7 +19,7 @@ def parse_instance_values(file_path):
     return np.array(layer_values)  # shape: [num_layers, num_timesteps]
 
 
-def accuracy_mean(file_list, output_path):
+def save_accuracy_mean(file_list, output_path):
     """
     Aggregate mean column-wise (frame-wise) values across multiple files.
     """
@@ -37,7 +37,7 @@ def accuracy_mean(file_list, output_path):
 
 
 
-def score_mean(file_list, output_path):
+def save_score_mean(file_list, output_path):
 
     # Load all files into list of dataframes
     dataframes = []
