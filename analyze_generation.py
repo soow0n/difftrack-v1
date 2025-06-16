@@ -69,8 +69,7 @@ def main(args):
     device = args.device
 
     output_dir = args.output_dir
-    prompt_path = args.txt_path 
-    index_path = args.idx_path
+    prompt_path = args.txt_path
 
     params = {
         'query_coords': None,
@@ -90,16 +89,8 @@ def main(args):
     with open(prompt_path, "r") as file:
         prompts = file.readlines()
     
-    with open(index_path, "r") as file:
-        indices = file.readlines()
-        selected_indices = sorted([int(index.strip()) for index in indices])
-
 
     for i, prompt in enumerate(prompts):
-        
-        if i not in selected_indices:
-            continue
-        
         seed = 42
         torch.manual_seed(seed)
         random.seed(seed)
@@ -325,7 +316,6 @@ if __name__=="__main__":
     parser.add_argument("--vis_track", action='store_true')
 
     parser.add_argument("--txt_path", type=str, required=True)
-    parser.add_argument("--idx_path", type=str, required=True)
     parser.add_argument("--track_dir", type=str, required=True)
     parser.add_argument("--visibility_dir", type=str, required=True)
     parser.add_argument("--image_dir", type=str, default='')

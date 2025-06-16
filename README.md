@@ -19,15 +19,15 @@
 
 ### 🔍 How do Video Diffusion Transformers (Video DiTs) learn and represent temporal correspondences across frames?
 
-To address this fundamental question, we present **DiffTrack** - a unified framework for uncovering and exploiting emergent temporal correspondences in video diffusion models. DiffTrack introduces:
+To address this fundamental question, we present 
 
-**📽️ Synthetic Video Dataset** enriched with pseudo ground-truth point tracking annotations.
+**DiffTrack** - a unified framework for uncovering and exploiting emergent temporal correspondences in video diffusion models. DiffTrack introduces:
 
-**📊 Novel Evaluation Metrics** specifically designed to quantify cross-frame consistency and attention-based correspondence.
+**📊 Novel Evaluation Metrics** specifically designed to quantify temporal correspondence in video DiTs.
 
 **🚀 Two Practical Applications**
-- **Zero-shot Point Tracking**  achieving state-of-the-art (SOTA) performance.
-- **Motion-Enhanced Video Generation** via a novel Cross-Attention Guidance (CAG) technique.
+- [**Zero-shot Point Tracking**](#2-zero-shot-point-tracking)  achieving state-of-the-art (SOTA) performance.
+- [**Motion-Enhanced Video Generation**](#3-cross-attention-guidance-cag) via a novel Cross-Attention Guidance (CAG) technique.
 
 
 
@@ -161,7 +161,7 @@ python evaluate_tapvid.py \
 </br>
 
 
-# 3. Cross Attention Guidance (CAG)
+# 3. Cross-Attention Guidance (CAG)
 
 We provide across several video backbone models: CogVideoX-2B, CogVideoX-5B.
 
