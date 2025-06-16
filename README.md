@@ -1,3 +1,3 @@
-# Visual Persona: Foundation Model for Full-Body Human Customization (CVPR'25)
+# Emergent Temporal Correspondences from Video Diffusion Models
 
-Official implementation of Visual Persona. Coming soon!
+Official implementation of DiffTrack. Coming soon!
